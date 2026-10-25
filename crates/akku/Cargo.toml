@@ -1,0 +1,25 @@
+[package]
+name = "akku"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "A pragmatic Rust battery pack: one namespace, clear APIs, opt-in power."
+keywords = ["batteries", "web", "http", "html", "toolkit"]
+categories = ["web-programming", "development-tools"]
+readme = "README.md"
+include = ["src/**", "Cargo.toml", "README.md"]
+
+[features]
+default = ["http"]
+http = ["dep:axum", "dep:tokio"]
+
+[dependencies]
+akku-drive.workspace = true
+axum = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+
+[package.metadata.docs.rs]
+all-features = true

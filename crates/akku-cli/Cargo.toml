@@ -1,0 +1,18 @@
+[package]
+name = "akku-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Command line helper for Akku projects."
+keywords = ["cli", "scaffold", "akku"]
+categories = ["command-line-utilities"]
+readme = "README.md"
+include = ["src/**", "Cargo.toml", "README.md"]
+
+[[bin]]
+name = "akku"
+path = "src/main.rs"
+doc = false
