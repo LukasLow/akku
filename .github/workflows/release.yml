@@ -44,6 +44,20 @@ jobs:
             echo "SKIP=1" >> "$GITHUB_ENV"
           fi
 
+      - name: Skip when the version is already published
+        if: env.SKIP != '1'
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "User-Agent: akku-release-ci (https://github.com/LukasLow/akku)" \
+            "https://crates.io/api/v1/crates/akku/$VERSION")
+          if [ "$code" = "200" ]; then
+            echo "akku $VERSION is already published; nothing to publish"
+            echo "SKIP=1" >> "$GITHUB_ENV"
+          elif [ "$code" != "404" ]; then
+            echo "crates.io returned $code for akku $VERSION"
+            exit 1
+          fi
+
       - name: Check that a release is prepared
         if: env.SKIP != '1'
         run: |
