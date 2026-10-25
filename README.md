@@ -92,4 +92,8 @@ the reserved names are in [`Namespace.md`](Namespace.md).
 
 ## License
 
-Apache-2.0.
+MPL-2.0, the same license as dree.
+
+The already published `0.0.1` package metadata says Apache-2.0. The repository
+and future releases use MPL-2.0; the license change applies from the next
+published version.

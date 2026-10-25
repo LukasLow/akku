@@ -30,4 +30,4 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 ## License
 
 By contributing you agree that your contribution is licensed under
-Apache-2.0.
+MPL-2.0.
