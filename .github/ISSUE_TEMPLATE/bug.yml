@@ -1,0 +1,31 @@
+name: Bug report
+description: Something behaves differently than documented.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Include the crate and version.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: The route, handler and request.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: akku version
+      placeholder: "0.0.1"
+    validations:
+      required: true

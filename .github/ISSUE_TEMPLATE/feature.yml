@@ -1,0 +1,19 @@
+name: Feature request
+description: Propose a capability, a domain or a check.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Which problem does it solve?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Proposed shape
+      description: Which domain path, which API, which macro?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

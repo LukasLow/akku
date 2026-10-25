@@ -86,6 +86,8 @@ the reserved names are in [`Namespace.md`](Namespace.md).
 - [Concept](CONCEPT.md)
 - [Namespace](Namespace.md)
 - [HTTP API](docs/API.md)
+- [Changelog](CHANGELOG.md)
+- [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)
 
 ## License
