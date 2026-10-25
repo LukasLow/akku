@@ -52,20 +52,21 @@ akku::math      Mathematik
 akku::tls       TLS-Adapter
 ```
 
-### Zwei Crates, die es wirklich braucht
+### Die Crates
 
 ```text
 akku/                 # Repo/Workspace, kein Crate-Name
   crates/
     akku/                 # die eine Dependency
     akku-drive/           # proc-macro = true
-    akku-cli/             # optional, später
+    akku-cli/             # Scaffolder, v0.0.1 enthalten
 ```
 
 - `akku-drive` ist unvermeidbar: Rust erlaubt Proc-Macros nur in einer eigenen
   `proc-macro = true`-Crate.
 - `akku` re-exportiert die Makros, sodass Nutzer nur `akku` sehen.
-- `akku-cli` ist optional und wird nicht Teil des v0-Ziels.
+- `akku-cli` ist ein kleiner Scaffolder (`akku new`) und bereits in v0.0.1
+  enthalten.
 
 `akku` ist der Repo-/Workspace-Name, `akku` das Produkt. Damit gibt es nur
 zwei frühe Crate-Namen statt 300.

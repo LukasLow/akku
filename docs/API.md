@@ -106,15 +106,16 @@ impl App {
 `Request`, `Response` and `Path` are re-exported axum types in v0.0.1:
 
 ```rust
-use akku::http::{Request, Response};
+use akku::html::{escape, Html};
+use akku::http::Request;
 
-async fn inspect(request: Request) -> Response {
+async fn inspect(request: Request) -> Html {
     let host = request
         .headers()
         .get("host")
         .and_then(|value| value.to_str().ok())
         .unwrap_or("unknown");
-    Response::new(format!("host: {host}").into())
+    Html::new(format!("host: {}", escape(host)))
 }
 ```
 

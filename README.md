@@ -42,7 +42,13 @@ cargo run
 
 ## Status
 
-`0.0.1` is the first public API. It is deliberately small:
+`0.0.1` is published:
+
+- [akku](https://crates.io/crates/akku)
+- [akku-drive](https://crates.io/crates/akku-drive)
+- [akku-cli](https://crates.io/crates/akku-cli)
+
+It is deliberately small:
 
 - `akku::html` — trusted HTML and escaping
 - `akku::http` — attribute routes, `App`, `Request`, `Response`, `Path`, `Result`
