@@ -1,0 +1,7 @@
+name = "config"
+status = "native"
+wasm32 = true
+wave = 1
+summary = "Layered configuration loader merging defaults, TOML/JSON/INI files, and environment overrides."
+owners = ["LukasLow"]
+tags = ["config", "settings", "toml", "json", "env"]
