@@ -1,58 +1,55 @@
 ---
 name: akku-security-audit
-description: Read-only Checker audit checklist for finding verified security, crash/panic, data-loss, and performance bugs in akku modules with zero false positives.
+description: Read-only Checker audit of akku code for verified security, panic, data-loss, speed, and architecture bugs. Use when auditing a module or a diff, running a NewLib G5 gate, or acting as the commit gate on a COMMIT REQUEST.
 ---
 
-# Akku Security & Correctness Audit Skill (Checker)
+# Security & correctness audit (Checker)
 
-Use this skill when acting as a **Checker** performing an independent, **strictly read-only** audit of one or more `akku` modules.
+You are a Checker: your prompt opened with `hello Worker I am Orcha`. Spawn no subagents.
 
-## 1. Strict Rules
+## Rules
 
-- **Read-only:** Do NOT edit files, do NOT create scratch files, and do NOT spawn subagents.
-  - **Only exception — commit gate:** if Orcha forwarded a Worker `COMMIT REQUEST`, and only after the audit and the `smd` gate pass, you may `git add` exactly the listed files and `git commit` on the host (never on `main`, never push). See [`AGENTS.md` → Commit Workflow](../../../AGENTS.md#commit-workflow).
-- **Zero False Positives:** Trace every suspected bug through the actual code paths before reporting it. If a guard elsewhere prevents the bug, drop the finding — never report speculative `[CRITICAL]` issues.
-- **Concrete Proof:** Every finding MUST include exact `file:line`, the bug mechanism, and a minimal concrete trigger input.
+- **Read-only.** You change no files. The single write you perform is the commit/push/PR step of [`PullRequest`](../../workflows/PullRequest.md), and only after the audit and the smd gate pass.
+- **Verified findings only.** Trace each suspected bug through the real code path; if a guard elsewhere prevents it, drop it. Report what you proved.
+- **Concrete proof.** Every finding has an exact `file:line`, the mechanism, and a minimal trigger input.
 
-## 2. Mandatory Audit Checklist
+## Checklist
 
-Inspect every module in scope across these 4 dimensions:
+Apply every item to every file in scope.
 
-### A. Security & Adversarial Inputs
-- **Path Traversal & Link Escapes:** Archive extraction or FS helpers allowing `../`, absolute paths, symlink chains, or hardlinks targeting files outside destination root.
-- **Injection & XSS Bypasses:** HTML/Markdown/XML/Template escaping gaps (e.g. control chars like `\x0c`, unquoted attributes, `XmlDecl`/PI/CDATA breakouts, `javascript:`/`data:` URL schemes).
-- **DoS / OOM / Amplification:**
-  - Pre-validation allocation (`vec![0; header_len]`, `with_capacity(untrusted)`).
-  - Quadratic/exponential expansion (YAML anchor cloning without alias limits, template string `replace`/`repeat` checked *after* allocation, decompression bombs, ReDoS).
-  - Depth bypasses (nested constructs that skip `depth += 1`) and **recursive `Drop` stack overflow** on deeply nested AST/Value types.
-- **RNG / Crypto / Protocol Smuggling:** Predictable fallback RNGs, unvalidated extensions/headers, `Content-Length` / `Transfer-Encoding` smuggling, leading `+` accepted by `from_str_radix`.
+### A. Security & adversarial input
+- **Path escapes:** `..`, absolute paths, symlink chains, hardlinks leaving the destination root (archives, fs helpers).
+- **Injection / XSS:** escaping gaps in HTML, Markdown, XML, templates (control chars like `\x0c`, unquoted attributes, PI/CDATA breakouts, `javascript:`/`data:` URLs).
+- **DoS / OOM / amplification:** allocation sized by an unvalidated length (`vec![0; n]`, `with_capacity(n)`); expansion checked after allocating (YAML anchors, template `replace`, decompression ratio, regex repetition); nesting that skips the depth counter; recursive `Drop` on deep trees.
+- **RNG / protocol:** predictable fallback RNG, request smuggling (`Content-Length` vs `Transfer-Encoding`), lenient number parsing (leading `+` via `from_str_radix`).
+- **unsafe:** every block per [`akku-unsafe`](../akku-unsafe/SKILL.md) §Checker review.
 
-### B. Correctness, Panics & Data Loss
-- **Deterministic Panics:** Unchecked arithmetic (`+`, `-`, `*` on `usize`), slice indexing out of bounds, UTF-8 char-boundary slicing panics, `.unwrap()` on untrusted input.
-- **Streaming & State-Machine Bugs:** Infinite loops or spurious errors on chunked reads, lost already-parsed events on mid-chunk errors, missing resync after oversized lines/frames, connection desync returning another request's response.
-- **Persistence & Round-Trip Corruption:** WAL/file recovery failing on zero-filled crash tails or silently truncating valid records on corruption; serializer producing output that fails to round-trip (e.g. quotes, YAML document markers `---`, CRLF patch mismatches).
+### B. Correctness, panics, data loss
+- **Panics:** unchecked `+ - *` on `usize`, out-of-range indexing, slicing off a UTF-8 char boundary, `unwrap()` on untrusted data.
+- **Streaming / state machines:** hangs or spurious errors at chunk boundaries, lost events after a mid-chunk error, missing resync after an oversized frame, connection desync.
+- **Persistence & round-trips:** crash-tail recovery (zero-filled tails, torn records), silent truncation on corruption, serializer output that fails to parse back identically.
 
-### C. Runtime Speed & Allocations
-- Hidden $O(n^2)$ loops (linear scans inside loops, bubble sort, repeated `String` re-scanning/re-allocation, `mem::take` dropping reusable buffer capacity per line).
-- Unbuffered byte-by-byte I/O or unbuffered multi-`write_all` socket sends (Nagle + delayed ACK stalls).
-- Syscall-per-operation patterns (e.g. opening `/dev/urandom` per frame).
+### C. Speed & allocations
+- Hidden O(n²): linear scans in loops, quadratic sorts, repeated re-scanning or re-allocation.
+- Unbuffered byte-wise I/O; several `write_all` calls per frame (Nagle stalls); a syscall per operation.
 
-### D. Architecture & API Hygiene
-- Alignment with [`Namespace.md`](../../../Namespace.md) and `#![forbid(unsafe_code)]` / `#![deny(missing_docs)]`.
-- Clean separation of parser / state machine / I/O / error types.
+### D. Architecture
+- Path and names match [`Namespace.md`](../../../Namespace.md); layout matches [`akku-module-layout`](../akku-module-layout/SKILL.md).
+- Rustdoc on every public item; rationale lives in `_dev/`, not in rustdoc.
+- Parser, state machine, I/O, and error types are separated; tests follow [`akku-tdd`](../akku-tdd/SKILL.md) (public seams, no tautologies).
 
-## 3. Required Output Format
-
-Report per module using a concise severity table (`CRITICAL`, `MEDIUM`, `LOW`):
+## Output
 
 ```markdown
 ## `<module>`
 
-| Sev | Location | Mechanism -> Concrete Trigger |
+| Sev | Location | Mechanism -> Trigger |
 |---|---|---|
-| CRITICAL | `crates/akku/src/<mod>/<file>.rs:<line>` | <exact mechanism> -> Trigger: `<minimal input>` |
+| CRITICAL | `crates/akku/src/<mod>/<file>.rs:<line>` | <mechanism> -> Trigger: `<minimal input>` |
 
 **Scores (0-10):** Security X · Correctness X · Speed X · Architecture X
+**Top 3 regression tests to add first:** …
+**Verdict:** PASS | FAIL (FAIL when any CRITICAL or MEDIUM is open)
 ```
 
-End with a **Top 3 Regression Tests to Add First** list prioritized by real impact.
+Severity: **CRITICAL** = exploitable, panic/crash on input, or data loss. **MEDIUM** = wrong result, significant slowdown, or a weakened guard. **LOW** = edge case or hygiene. Orcha records findings in the module's `_dev/AUDIT.md` (see [`Audit`](../../workflows/Audit.md)).

@@ -22,15 +22,15 @@
 - [x] `main` protected (2026-11-24): PR required (0 approvals so agents can merge), required check `test`, enforced for admins, no force-push/deletion. The release workflow only reacts to merges and creates tags via API, so it is unaffected.
 
 ### 0.3 Governance system (`.agents/`)
-- [ ] Study `~/home/repos/mojoakku` (skills, workflows, per-lib docs) and Matt Pocock's public skills; adopt what fits.
-- [ ] `.agents/skills/` — expand into a full skill set (module impl, audit, smd, docs, release, PR, scan, …).
-- [ ] `.agents/workflows/` — at least: **new-lib intake** (human says "open a PR: add X because Y" → proposal PR → Worker/Checker PRs), bugfix, audit, commit/PR, release, module migration.
-- [ ] Rewrite the Commit Workflow for PR-only (Checker commits on a branch and opens or updates the PR; nothing lands on `main` directly).
-- [ ] AGENTS.md = everything maintainers/agents need, with details linked into `.agents/`. README = everything newcomers need.
-- [ ] Translate German docs to English: `CONCEPT.md`, `Namespace.md`, and the remaining sections of `docs/`. (Open: keep `hallo Worker ich bin Orcha` as a fixed handshake token?)
+- [x] Study `~/home/repos/mojoakku` (skills, workflows, per-lib docs) and Matt Pocock's public skills; adopt what fits. (Adopted: workflow section shape, `_dev/` per-module docs, one branch/PR per lib, session reuse; Pocock `writing-for-agents`, `tdd`, `pr`, `diagnosing-bugs`, credited MIT.)
+- [x] `.agents/skills/` — expand into a full skill set (module impl, audit, smd, docs, release, PR, scan, …). (Skills: `akku-module-impl`, `akku-module-layout`, `akku-tdd`, `akku-security-audit`, `akku-unsafe`, `akku-pr`, `akku-smd-workflow`; release and scan are workflows; index in `.agents/README.md`.)
+- [x] `.agents/workflows/` — at least: **new-lib intake** (human says "open a PR: add X because Y" → proposal PR → Worker/Checker PRs), bugfix, audit, commit/PR, release, module migration. (`NewLib` G1–G6, `BugFix`, `Audit`, `PullRequest`, `Release`, `ModuleMigration`.)
+- [x] Rewrite the Commit Workflow for PR-only (Checker commits on a branch and opens or updates the PR; nothing lands on `main` directly). (`.agents/workflows/PullRequest.md`.)
+- [ ] AGENTS.md = everything maintainers/agents need, with details linked into `.agents/`. README = everything newcomers need. (AGENTS.md part done; README part → 0.5 README rewrite.)
+- [ ] Translate German docs to English: `CONCEPT.md`, `Namespace.md`, and the remaining sections of `docs/`. (Resolved: the handshake token is English, `hello Worker I am Orcha`; AGENTS.md and `.agents/` use it.)
 
 ### 0.4 Policies
-- [ ] **unsafe policy:** allowed **only** where unavoidable (FFI, OS syscalls/sockets, platform APIs), never for convenience or speed. Mechanics: crate-level `#![deny(unsafe_code)]`, `#[allow(unsafe_code)]` only in designated `sys` submodules, every block has a `// SAFETY:` comment (`clippy::undocumented_unsafe_blocks`), CI enforces an allowlist of files. Update AGENTS.md, CONCEPT.md and the skills.
+- [ ] **unsafe policy:** allowed **only** where unavoidable (FFI, OS syscalls/sockets, platform APIs), never for convenience or speed. Mechanics: crate-level `#![deny(unsafe_code)]`, `#[allow(unsafe_code)]` only in designated `sys` submodules, every block has a `// SAFETY:` comment (`clippy::undocumented_unsafe_blocks`), CI enforces an allowlist of files. AGENTS.md and the skills updated (PR #5); remaining: CONCEPT.md (with the translation) and the CI mechanics (0.6).
 - [ ] Namespace: flat-first stays; dissolve the planned `net` family → flat `net` (std::net superset), `dns`, `quic`; add `xdr`, `vfs`, `nfs` (`nfs::server`/`client`; ONC-RPC internal for now).
 - [ ] Only the 3 crates on crates.io (`akku`, `akku-drive`, `akku-cli`); everything else stays inside `akku`.
 
@@ -44,6 +44,7 @@
 - [ ] Gates on every PR: fmt, clippy `-D warnings`, tests (all features and no default features), rustdoc `-Dwarnings`, `catalog check`, unsafe allowlist, wasm32 check (`--no-default-features`).
 - [ ] **Release guard:** fail any release/version bump outside `0.0.x` (stay on `0.0.x` until at least 2027-Q2). Note: `.changie.yaml` has `Added/Changed/…: auto: minor`, so `changie batch auto` would produce `0.1.0`; change it to `patch` or forbid `auto`.
 - [ ] macOS / Linux / Windows runners (needed for the OS layer).
+- [ ] Changelog check: require a fragment *added by this PR* (today `check-changes.sh` passes if any fragment exists); create the `release` label if Release.md should use one.
 
 ### 0.7 OS layer (design first, as an RFC PR)
 - [ ] RFC: platform modules `akku::os::{unix, linux, macos, ios, android, windows}` (superset of `std::os`, cfg-gated); unified APIs stay flat domain modules (`clipboard`, `notify`, `secret`, `power`, …; media capture via `audio::device` / `vid::device`); errors `Unsupported` / `NotAvailable` / `PermissionDenied`; a per-platform support matrix in `meta.toml` → catalog/capabilities.

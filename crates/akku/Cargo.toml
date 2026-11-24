@@ -10,7 +10,7 @@ description = "A pragmatic Rust battery pack: one namespace, clear APIs, opt-in 
 keywords = ["batteries", "web", "http", "html", "toolkit"]
 categories = ["web-programming", "development-tools"]
 readme = "README.md"
-include = ["src/**", "Cargo.toml", "README.md"]
+include = ["src/**", "!src/**/_dev/**", "Cargo.toml", "README.md"]
 autotests = false
 
 [features]
