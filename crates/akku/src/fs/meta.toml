@@ -1,0 +1,7 @@
+name = "fs"
+status = "native"
+wasm32 = false
+wave = 1
+summary = "Filesystem utilities: atomic writes, RAII temp files/dirs, recursive directory walking, and glob matching."
+owners = ["LukasLow"]
+tags = ["fs", "io", "glob", "walk", "temp"]
