@@ -1,0 +1,7 @@
+name = "sse"
+status = "native"
+wasm32 = true
+wave = 2
+summary = "Zero-dependency WHATWG Server-Sent Events parser, encoder, and stream helpers."
+owners = ["LukasLow"]
+tags = ["sse", "web", "streaming", "protocol"]
