@@ -1,0 +1,7 @@
+name = "text"
+status = "native"
+wasm32 = true
+wave = 2
+summary = "Zero-dependency Unicode UAX #29 graphemes, text helpers, and Myers diff engine."
+owners = ["LukasLow"]
+tags = ["text", "unicode", "grapheme", "diff"]
