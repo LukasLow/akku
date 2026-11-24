@@ -1,0 +1,7 @@
+name = "template"
+status = "native"
+wasm32 = true
+wave = 2
+summary = "Zero-dependency auto-escaping template engine with AST compiler, blocks, and filters."
+owners = ["LukasLow"]
+tags = ["template", "html", "rendering", "web"]
