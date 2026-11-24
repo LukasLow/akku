@@ -1,0 +1,7 @@
+name = "term"
+status = "native"
+wasm32 = false
+wave = 1
+summary = "Terminal ANSI styling, color detection, Unicode display width, progress bars, and interactive prompts."
+owners = ["LukasLow"]
+tags = ["term", "ansi", "cli", "tui"]
