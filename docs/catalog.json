@@ -22,9 +22,9 @@
       "wasm32": true,
       "feature": null,
       "wave": 1,
-      "summary": "Shared immutable byte buffers, growable byte builders, cursor readers, and LEB128/zigzag varints.",
+      "summary": "Shared immutable byte buffers, growable byte builders, and cursor readers.",
       "owners": ["LukasLow"],
-      "tags": ["bytes", "buffers", "binary", "varint"],
+      "tags": ["bytes", "buffers", "binary"],
       "derived_tags": ["native-0dep", "wasm32"],
       "source": null,
       "path": "crates/akku/src/bytes"

@@ -33,19 +33,19 @@ Hex is the everyday way to show bytes to humans: hashes, keys, IDs, binary in lo
 
 Pinned to the commits read during the 2026-11-24 migration.
 
-- **Go** `encoding/hex`, `golang/go@2e78a18`, `src/encoding/hex/hex.go`
+- **Go** `encoding/hex`, `golang/go@2e78a1823a17b0d8de782bd9e3710a4918f3c075`, `src/encoding/hex/hex.go`
   - `:39` `EncodedLen(n) = n * 2` with no overflow check.
   - `:115-202` `Decode`: decodes pairs left to right, returns `InvalidByteError(byte)` with **no index**, and for an odd length checks the dangling last byte before returning `ErrLength` (comment at `:192-193`: "the invalid char (if present) is an earlier problem"). akku uses the same precedence.
   - `:115` `Decode` writes into `dst` without a size check and panics on a short `dst` (`_ = dst[3]` bounds check). akku returns `OutputTooSmall` instead.
   - Returns "the number of bytes decoded before the error", so `dst` is partially written on error. akku documents the same.
   - `:85`, `:207` `AppendEncode`/`AppendDecode` (Go 1.22).
-- **Rust `hex` crate** 0.4.3, `KokaKiwi/rust-hex@e25a870`
+- **Rust `hex` crate** 0.4.3, `KokaKiwi/rust-hex@e25a8701f7f6b5ec4acedffcb4a45cfb69cc34eb`
   - `src/lib.rs:321-336` `decode_to_slice`: checks `OddLength` **before** invalid characters, and requires `out.len() == data.len() / 2` **exactly** (`InvalidStringLength`). akku reports the invalid byte first (like Go) and accepts a larger buffer.
   - `src/lib.rs:424` `encode_to_slice`: requires an exact `input.len() * 2` buffer. akku accepts larger and returns the written length.
   - `src/lib.rs:195-208` (`val`) reports `InvalidHexCharacter { c: bytes[i] as char, index }`. That reads a non-ASCII byte as Latin-1 (`0xc3` becomes `'Ã'`). akku reports the raw `byte: u8`.
   - `src/error.rs:6` `FromHexError` is not `#[non_exhaustive]`. akku's `DecodeError` is.
-- **Python** `python/cpython@cc056ab`
-  - `Objects/bytesobject.c:2751-2779` `bytes.fromhex` skips ASCII whitespace between pairs and reports "non-hexadecimal number found in fromhex() arg at position N". Its separate odd-length message is at `:2793`.
+- **Python** `python/cpython@cc056abcd53ff54364aed29fd4c3b44b3f6b53a4`
+  - `Objects/bytesobject.c:2751-2797` `bytes.fromhex`: skips ASCII whitespace between pairs (`:2752-2760`) and reports "non-hexadecimal number found in fromhex() arg at position N" (`:2796-2797`). Its separate odd-length message is at `:2793`.
   - `Modules/binascii.c:2284-2320` `unhexlify` with the new `ignorechars` parameter (RFC 4648 §3.3); without it, any non-digit raises "Non-hexadecimal digit found".
   - `bytes.hex(sep, bytes_per_sep)` added in Python 3.8 (docs: <https://docs.python.org/3/library/stdtypes.html#bytes.hex>).
 - **RFC 4648** §8 (Base16 alphabet), §10 (test vectors; used in `tests.rs`), §3.3 (implementations must reject non-alphabet characters unless the spec says otherwise). <https://www.rfc-editor.org/rfc/rfc4648>

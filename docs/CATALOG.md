@@ -7,7 +7,7 @@
 | Module | Status | WASM32 | Feature | Owners | Summary |
 | --- | --- | --- | --- | --- | --- |
 | `akku::base64` | `native` | yes | - | `@LukasLow` | Zero-dependency RFC 4648 Base64 encoding and decoding (standard, URL-safe, padded and unpadded). |
-| `akku::bytes` | `native` | yes | - | `@LukasLow` | Shared immutable byte buffers, growable byte builders, cursor readers, and LEB128/zigzag varints. |
+| `akku::bytes` | `native` | yes | - | `@LukasLow` | Shared immutable byte buffers, growable byte builders, and cursor readers. |
 | `akku::cli` | `native` | no | - | `@LukasLow` | Zero-dependency command-line argument parser with subcommands, flags, env fallbacks, and help rendering. |
 | `akku::config` | `native` | yes | - | `@LukasLow` | Layered configuration loader merging defaults, TOML/JSON/INI files, and environment overrides. |
 | `akku::csv` | `native` | yes | - | `@LukasLow` | RFC 4180 streaming CSV reader and writer with custom delimiters, headers, and zero-copy record slicing. |

@@ -67,7 +67,7 @@ most modules already **`native` (0 deps)**.
 - [x] `log` (`native`) — structured logging (human + JSON)
 - [x] `fs` (`native`) — `std::fs` superset + `walk`, `glob`, `tempfile`, atomic write
 - [x] `env` (`native`) — typed env vars & OS standard dirs (config/cache/data)
-- [x] `process` (`native`) — ergonomic commands, pipes, signals
+- [x] `process` (`native`) — ergonomic commands, pipes (signals still open)
 - [x] `test` (`native`) — HTTP test client, tempdir, snapshot assertions
 - [x] `time` (`native`) — `clock`, `datetime`, `duration`, `timezone`
 - [x] `units` (`native`) — dimensional units (`distance`, `mass`, `time`, `temp`, `energy`, `speed`, `pressure`)
@@ -102,6 +102,7 @@ Goal: production web backends, data pipelines, and WASM-ready clients.
 - [x] `cache` (`native`) — in-memory LRU/TTL cache
 - [ ] `task` & `sync` (`adapter → native`, + `wasm32` spawn) — async tasks, channels, semaphore, `schedule`
 - [ ] `net`, `dns`, `quic` (`native` / `adapter`) — flat modules: `net` (`std::net` superset: IP, TCP/UDP/Unix sockets, async), `dns`, `quic`
+- [ ] `xdr`, `vfs`, `nfs` (megaghost-driven) — `xdr` (XDR, RFC 4506), `vfs` (virtual filesystem trait layer), `nfs` (`server`/`client` over `vfs`; ONC-RPC internal; read-only `server` first)
 
 ---
 

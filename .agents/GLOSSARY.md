@@ -25,3 +25,4 @@ Shared terms for agents and maintainers. One meaning per term; the linked file i
 - **Changie fragment** — `.changes/unreleased/*.yaml` describing a user-facing change. ([akku-pr](skills/akku-pr/SKILL.md))
 - **One-way / two-way door** — a change that is hard / easy to reverse (PR Merge Danger).
 - **capabilities.md** — planned index of capability → module path (TODO 0.5).
+- **megaghost** — downstream app that serves a MEGA virtual drive over local NFS; it drives `net`, `xdr`, `vfs`, `nfs` and `os::macos` + `secret` (TODO 0.7, 0.9; [Namespace.md](../Namespace.md)).

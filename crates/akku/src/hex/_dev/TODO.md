@@ -8,7 +8,7 @@
 - `Encoder<W: Write>` / `Decoder<R: Read>` — streaming hex over `std::io`. (origin: Go `hex.NewEncoder` / `hex.NewDecoder`)
 
 ## Formatting
-- `Display` adapter (`hex::display(&bytes)`) — format without allocating a `String`. (origin: `hex` crate `ToHex` / DESIGN.md §Non-goals)
+- `Display` adapter (`hex::display(&bytes)`) — format without allocating a `String`. (origin: `hex` crate `ToHex`; a free function, not a trait, per DESIGN.md §Non-goals "Trait-based API")
 - `encode_with_separator(input, sep, bytes_per_sep)` — `de:ad:be:ef` style. (origin: Python `bytes.hex(sep, bytes_per_sep)`)
 - hex dump (`xxd` / `hexdump -C` layout) — decide whether it lives here or in a presentation module. (origin: Go `hex.Dump` / `hex.Dumper`)
 
