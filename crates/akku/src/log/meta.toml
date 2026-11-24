@@ -1,0 +1,7 @@
+name = "log"
+status = "native"
+wasm32 = true
+wave = 1
+summary = "Structured logging facade with human and JSON formatters, level filters, and lazy field macros."
+owners = ["LukasLow"]
+tags = ["log", "logging", "structured", "observability"]
