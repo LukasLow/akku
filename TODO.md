@@ -14,11 +14,11 @@
 
 ### 0.1 Alignment
 - [ ] Purpose statement ("Why akku?") confirmed by the human → becomes the README intro (English).
-- [x] OS layer design approved (see 0.7): Rust `std::os` names (`macos`, not `darwin`); unified APIs as flat modules (no `unios`). Open: platform code in internal crates `akku-<platform>`? (see 0.7).
+- [x] OS layer design approved (see 0.7): Rust `std::os` names (`macos`, not `darwin`); unified APIs as flat modules (no `unios`). Platform code stays inside `akku` (no extra crates, see 0.7).
 - [x] Decided: **agents merge** PRs once CI is green and a Checker approved.
 
 ### 0.2 Land the current state (PR-only from now on)
-- [ ] (PR #3 open: https://github.com/LukasLow/akku/pull/3) Create a feature branch and land the uncommitted work (37 modules, Wave-2 bugfix pass, `flake.nix`, AGENTS commit workflow) through PRs via the Commit Workflow (one commit per module/batch).
+- [x] (PR #3 merged as `5626535`: https://github.com/LukasLow/akku/pull/3) Create a feature branch and land the uncommitted work (37 modules, Wave-2 bugfix pass, `flake.nix`, AGENTS commit workflow) through PRs via the Commit Workflow (one commit per module/batch).
 - [x] `main` protected (2026-11-24): PR required (0 approvals so agents can merge), required check `test`, enforced for admins, no force-push/deletion. The release workflow only reacts to merges and creates tags via API, so it is unaffected.
 
 ### 0.3 Governance system (`.agents/`)
@@ -47,6 +47,7 @@
 
 ### 0.7 OS layer (design first, as an RFC PR)
 - [ ] RFC: platform modules `akku::os::{unix, linux, macos, ios, android, windows}` (superset of `std::os`, cfg-gated); unified APIs stay flat domain modules (`clipboard`, `notify`, `secret`, `power`, …; media capture via `audio::device` / `vid::device`); errors `Unsupported` / `NotAvailable` / `PermissionDenied`; a per-platform support matrix in `meta.toml` → catalog/capabilities.
+- [x] Decision (2026-11-24): **no `akku-<platform>` crates.** Platform code lives in `akku` as `#[cfg(target_os = …)]` modules under `akku::os::<platform>`; platform-only deps go in `[target.'cfg(…)'.dependencies]`. Reason: a crate that published `akku` depends on must itself be on crates.io, and we keep exactly 3 published crates (this also avoids name squatting). Splitting a module into its own crate later stays possible without changing the public path.
 - [ ] First slice driven by megaghost: `os::macos` + `secret` (Keychain), if the RFC is accepted.
 
 ### 0.8 Quality migration of existing modules
