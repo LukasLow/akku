@@ -1,0 +1,7 @@
+name = "markdown"
+status = "native"
+wasm32 = true
+wave = 2
+summary = "Zero-dependency CommonMark/GFM parser, AST, and XSS-safe HTML renderer."
+owners = ["LukasLow"]
+tags = ["markdown", "markup", "html", "parser"]
