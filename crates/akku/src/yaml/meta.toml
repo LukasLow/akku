@@ -1,0 +1,7 @@
+name = "yaml"
+status = "native"
+wasm32 = true
+wave = 2
+summary = "Zero-dependency YAML 1.2 Core Schema parser, value model, multi-doc streams, and serializer."
+owners = ["LukasLow"]
+tags = ["yaml", "format", "config"]

@@ -1,0 +1,7 @@
+name = "csv"
+status = "native"
+wasm32 = true
+wave = 1
+summary = "RFC 4180 streaming CSV reader and writer with custom delimiters, headers, and zero-copy record slicing."
+owners = ["LukasLow"]
+tags = ["csv", "format", "streaming", "rfc4180"]

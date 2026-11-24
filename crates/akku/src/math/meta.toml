@@ -1,0 +1,7 @@
+name = "math"
+status = "native"
+wasm32 = true
+wave = 1
+summary = "Exact decimal arithmetic, dense linear algebra, special functions, and online descriptive statistics."
+owners = ["LukasLow"]
+tags = ["math", "decimal", "linalg", "statistics"]

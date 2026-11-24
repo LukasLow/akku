@@ -1,0 +1,3 @@
+kind: Added
+body: Land 37 modules in a one-folder-per-module layout (each with tests.rs and meta.toml), apply the Wave-2 security bugfix pass, and add the akku catalog gen/check generator.
+time: 2026-11-24T00:00:00Z

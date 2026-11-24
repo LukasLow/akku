@@ -1,0 +1,7 @@
+name = "algo"
+status = "native"
+wasm32 = true
+wave = 2
+summary = "Zero-dependency graph, shortest-path, union-find, range-query, and string-search algorithms."
+owners = ["LukasLow"]
+tags = ["algo", "graph", "data-structures"]

@@ -1,0 +1,7 @@
+name = "process"
+status = "native"
+wasm32 = false
+wave = 1
+summary = "Subprocess execution and multi-stage command pipelines with deadlock-free piped stdin/stderr draining."
+owners = ["LukasLow"]
+tags = ["process", "os", "exec", "pipeline"]

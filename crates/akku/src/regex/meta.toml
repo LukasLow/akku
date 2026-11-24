@@ -1,0 +1,7 @@
+name = "regex"
+status = "native"
+wasm32 = true
+wave = 2
+summary = "Zero-dependency linear-time ReDoS-safe PikeVM/NFA regular expression engine."
+owners = ["LukasLow"]
+tags = ["regex", "text", "parser", "automata"]

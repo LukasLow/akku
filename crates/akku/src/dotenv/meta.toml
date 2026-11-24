@@ -1,0 +1,7 @@
+name = "dotenv"
+status = "native"
+wasm32 = true
+wave = 1
+summary = "Zero-dependency .env file parser with quoting, escapes, comments, and variable interpolation."
+owners = ["LukasLow"]
+tags = ["dotenv", "config", "env", "format"]

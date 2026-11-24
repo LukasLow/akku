@@ -1,0 +1,7 @@
+name = "env"
+status = "native"
+wasm32 = false
+wave = 1
+summary = "Typed environment variable access, boolean/list/path parsing, and platform directory discovery."
+owners = ["LukasLow"]
+tags = ["env", "os", "config", "paths"]

@@ -11,6 +11,7 @@ keywords = ["batteries", "web", "http", "html", "toolkit"]
 categories = ["web-programming", "development-tools"]
 readme = "README.md"
 include = ["src/**", "Cargo.toml", "README.md"]
+autotests = false
 
 [features]
 default = ["http"]
@@ -23,3 +24,158 @@ tokio = { workspace = true, optional = true }
 
 [package.metadata.docs.rs]
 all-features = true
+
+# Per-module public-API integration tests live inside each module's folder.
+[[test]]
+name = "base64"
+path = "src/base64/tests.rs"
+
+[[test]]
+name = "bytes"
+path = "src/bytes/tests.rs"
+
+[[test]]
+name = "cli"
+path = "src/cli/tests.rs"
+
+[[test]]
+name = "config"
+path = "src/config/tests.rs"
+
+[[test]]
+name = "csv"
+path = "src/csv/tests.rs"
+
+[[test]]
+name = "dotenv"
+path = "src/dotenv/tests.rs"
+
+[[test]]
+name = "env"
+path = "src/env/tests.rs"
+
+[[test]]
+name = "error"
+path = "src/error/tests.rs"
+
+[[test]]
+name = "fs"
+path = "src/fs/tests.rs"
+
+[[test]]
+name = "hex"
+path = "src/hex/tests.rs"
+
+[[test]]
+name = "html"
+path = "src/html/tests.rs"
+
+[[test]]
+name = "http"
+path = "src/http/tests.rs"
+required-features = ["http"]
+
+[[test]]
+name = "http_client"
+path = "src/http/tests_client.rs"
+required-features = ["http"]
+
+[[test]]
+name = "id"
+path = "src/id/tests.rs"
+
+[[test]]
+name = "ini"
+path = "src/ini/tests.rs"
+
+[[test]]
+name = "json"
+path = "src/json/tests.rs"
+
+[[test]]
+name = "log"
+path = "src/log/tests.rs"
+
+[[test]]
+name = "math"
+path = "src/math/tests.rs"
+
+[[test]]
+name = "mime"
+path = "src/mime/tests.rs"
+
+[[test]]
+name = "process"
+path = "src/process/tests.rs"
+
+[[test]]
+name = "term"
+path = "src/term/tests.rs"
+
+[[test]]
+name = "test_utils"
+path = "src/test/tests.rs"
+
+[[test]]
+name = "time"
+path = "src/time/tests.rs"
+
+[[test]]
+name = "toml"
+path = "src/toml/tests.rs"
+
+[[test]]
+name = "units"
+path = "src/units/tests.rs"
+
+[[test]]
+name = "url"
+path = "src/url/tests.rs"
+
+[[test]]
+name = "yaml"
+path = "src/yaml/tests.rs"
+
+[[test]]
+name = "algo"
+path = "src/algo/tests.rs"
+
+[[test]]
+name = "archive"
+path = "src/archive/tests.rs"
+
+[[test]]
+name = "cache"
+path = "src/cache/tests.rs"
+
+[[test]]
+name = "kv"
+path = "src/kv/tests.rs"
+
+[[test]]
+name = "markdown"
+path = "src/markdown/tests.rs"
+
+[[test]]
+name = "regex"
+path = "src/regex/tests.rs"
+
+[[test]]
+name = "sse"
+path = "src/sse/tests.rs"
+
+[[test]]
+name = "template"
+path = "src/template/tests.rs"
+
+[[test]]
+name = "text"
+path = "src/text/tests.rs"
+
+[[test]]
+name = "ws"
+path = "src/ws/tests.rs"
+
+[[test]]
+name = "xml"
+path = "src/xml/tests.rs"

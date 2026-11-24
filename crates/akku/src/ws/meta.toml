@@ -1,0 +1,7 @@
+name = "ws"
+status = "native"
+wasm32 = true
+wave = 2
+summary = "Zero-dependency RFC 6455 WebSocket framing, handshake, masking, and UTF-8 state machine."
+owners = ["LukasLow"]
+tags = ["ws", "websocket", "web", "protocol"]

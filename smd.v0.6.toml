@@ -1,0 +1,20 @@
+[dockerfile]
+  lines = '''
+FROM docker.io/library/rust:1.85-alpine
+RUN apk add --no-cache musl-dev gcc git
+'''
+
+[ports]
+  publish = []
+
+[volume]
+  volumes = []
+
+[network]
+  mode = ""
+
+[smd]
+  version = "0.6.0"
+  block_cmd = ["git commit"]
+
+# For more information see: smd --help | smd --agent | smd --changelog

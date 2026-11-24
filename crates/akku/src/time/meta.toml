@@ -1,0 +1,7 @@
+name = "time"
+status = "native"
+wasm32 = true
+wave = 1
+summary = "Calendar dates, wall times, UTC offsets, signed durations, RFC 3339 parsing/formatting, and injectable clocks."
+owners = ["LukasLow"]
+tags = ["time", "datetime", "rfc3339", "clock"]

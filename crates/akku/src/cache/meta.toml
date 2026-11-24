@@ -1,0 +1,7 @@
+name = "cache"
+status = "native"
+wasm32 = true
+wave = 2
+summary = "Zero-dependency O(1) LRU and TTL in-memory cache with eviction and stats."
+owners = ["LukasLow"]
+tags = ["cache", "lru", "ttl", "memory"]

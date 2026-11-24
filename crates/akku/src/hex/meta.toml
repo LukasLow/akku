@@ -1,0 +1,7 @@
+name = "hex"
+status = "native"
+wasm32 = true
+wave = 1
+summary = "Zero-dependency hexadecimal encoding and decoding (lowercase, uppercase, and slice-into-buffer)."
+owners = ["LukasLow"]
+tags = ["encoding", "hex", "binary"]

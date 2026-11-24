@@ -1,0 +1,7 @@
+name = "archive"
+status = "native"
+wasm32 = true
+wave = 2
+summary = "Zero-dependency DEFLATE, Gzip, Tar, and Zip compression and archive family."
+owners = ["LukasLow"]
+tags = ["archive", "compression", "tar", "zip", "gzip"]
