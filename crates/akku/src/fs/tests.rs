@@ -18,6 +18,58 @@ fn put(root: &Path, rel: &str, bytes: &[u8]) {
     std::fs::write(path, bytes).expect("write test file");
 }
 
+/// Create a directory symlink `link -> target`.
+///
+/// Returns `false` (and the caller skips) where the platform refuses, e.g.
+/// Windows without the symlink privilege or developer mode. Unix must
+/// always succeed.
+fn symlink_dir(target: &Path, link: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link).unwrap();
+        true
+    }
+    #[cfg(windows)]
+    {
+        skip_unless(std::os::windows::fs::symlink_dir(target, link))
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (target, link);
+        false
+    }
+}
+
+/// Create a file symlink `link -> target`; see [`symlink_dir`].
+fn symlink_file(target: &Path, link: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link).unwrap();
+        true
+    }
+    #[cfg(windows)]
+    {
+        skip_unless(std::os::windows::fs::symlink_file(target, link))
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (target, link);
+        false
+    }
+}
+
+/// `true` on success; logs a skip notice when symlinks are not permitted.
+#[cfg(windows)]
+fn skip_unless(result: std::io::Result<()>) -> bool {
+    match result {
+        Ok(()) => true,
+        Err(err) => {
+            eprintln!("skipping: cannot create symlinks here ({err})");
+            false
+        }
+    }
+}
+
 /// The file name of an entry, as display text.
 fn base(entry: &WalkEntry) -> String {
     entry
@@ -150,7 +202,9 @@ fn walk_symlink_cycle_terminates() {
     let root = TempDir::new("walk-cycle").unwrap();
     put(root.as_path(), "sub/in.txt", b"i");
     let link = root.as_path().join("sub/loop");
-    std::os::unix::fs::symlink(root.as_path(), &link).unwrap();
+    if !symlink_dir(root.as_path(), &link) {
+        return;
+    }
 
     // Following symlinks must hit the cycle guard instead of looping.
     let followed: Vec<WalkEntry> = WalkBuilder::new(root.as_path())
@@ -466,14 +520,15 @@ fn fs_reexports_are_usable() {
     assert!(listed.contains(&dir.as_path().join("f.txt")));
 }
 
-#[cfg(unix)]
 #[test]
 fn glob_symlink_cycle_terminates_without_following() {
     let root = TempDir::new("glob-symlink-cycle").unwrap();
     put(root.as_path(), "a.txt", b"a");
     put(root.as_path(), "sub/b.txt", b"b");
     let link = root.as_path().join("loop");
-    std::os::unix::fs::symlink(root.as_path(), &link).unwrap();
+    if !symlink_dir(root.as_path(), &link) {
+        return;
+    }
 
     let all = glob(&format!("{}/**", root.as_path().display())).unwrap();
     assert!(all.contains(&root.as_path().join("a.txt")));
@@ -493,14 +548,15 @@ fn glob_symlink_cycle_terminates_without_following() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn walk_broken_symlink_yields_error_and_siblings() {
     let root = TempDir::new("walk-broken-sibling").unwrap();
     put(root.as_path(), "a_valid.txt", b"ok");
     put(root.as_path(), "z_valid.txt", b"ok2");
     let broken = root.as_path().join("m_broken");
-    std::os::unix::fs::symlink(root.as_path().join("does-not-exist"), &broken).unwrap();
+    if !symlink_file(&root.as_path().join("does-not-exist"), &broken) {
+        return;
+    }
 
     let items: Vec<_> = WalkBuilder::new(root.as_path())
         .follow_symlinks(true)
@@ -520,4 +576,28 @@ fn walk_broken_symlink_yields_error_and_siblings() {
     assert_eq!(errors, vec![broken]);
     assert!(entries.contains(&root.as_path().join("a_valid.txt")));
     assert!(entries.contains(&root.as_path().join("z_valid.txt")));
+}
+
+/// Windows patterns carry a drive or UNC prefix and use `\` separators.
+#[cfg(windows)]
+#[test]
+fn glob_accepts_windows_prefixes_and_backslashes() {
+    let root = TempDir::new("glob-win").unwrap();
+    put(root.as_path(), "a.rs", b"");
+    put(root.as_path(), "sub/c.rs", b"");
+    let root = root.as_path();
+    let native = format!("{}\\**\\*.rs", root.display());
+    assert_eq!(
+        glob(&native).unwrap(),
+        vec![root.join("a.rs"), root.join("sub").join("c.rs")]
+    );
+    // A syntax error behind the prefix reports its position in the full pattern.
+    let bad = format!("{}\\[", root.display());
+    match glob(&bad) {
+        Err(GlobError::Syntax { position, issue }) => {
+            assert_eq!(issue, PatternIssue::UnclosedClass);
+            assert_eq!(position, bad.len() - 1);
+        }
+        other => panic!("expected a syntax error, got {other:?}"),
+    }
 }

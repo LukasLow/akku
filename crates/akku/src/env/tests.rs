@@ -11,6 +11,9 @@ use akku::env::{
     remove_var, require, set_var, MissingVar,
 };
 
+/// The separator `std::env::split_paths` splits on.
+const SEP: &str = if cfg!(windows) { ";" } else { ":" };
+
 /// Serialize all environment mutations across the test binaries' threads.
 fn lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -90,7 +93,9 @@ fn get_parsed_reports_set_unset_and_broken() {
 
 #[test]
 fn get_list_splits_on_the_path_separator() {
-    with_env("AKKU_TEST_LIST", "tools:/usr/bin::/usr/local/bin", || {
+    // `;` on Windows, `:` elsewhere (std's split_paths separator).
+    let list = format!("tools{SEP}/usr/bin{SEP}{SEP}/usr/local/bin");
+    with_env("AKKU_TEST_LIST", &list, || {
         assert_eq!(
             get_list("AKKU_TEST_LIST"),
             vec!["tools", "/usr/bin", "/usr/local/bin"]
@@ -104,7 +109,7 @@ fn get_list_splits_on_the_path_separator() {
             ]
         );
     });
-    with_env("AKKU_TEST_LIST", ":", || {
+    with_env("AKKU_TEST_LIST", SEP, || {
         assert!(get_list("AKKU_TEST_LIST").is_empty());
     });
     // Unset variables yield empty vectors.
@@ -207,8 +212,8 @@ fn std_env_reexports_are_usable() {
     // `var`, `vars`, `split_paths`, `join_paths`.
     assert_eq!(std::env::var("AKKU_TEST_STD_REEXPORT").unwrap(), "v");
     assert!(akku::env::vars().any(|(key, _)| key == "AKKU_TEST_STD_REEXPORT"));
-    let joined =
-        akku::env::join_paths(akku::env::split_paths("/bin:/usr/local/bin")).unwrap_or_default();
-    assert_eq!(joined, "/bin:/usr/local/bin");
+    let list = format!("/bin{SEP}/usr/local/bin");
+    let joined = akku::env::join_paths(akku::env::split_paths(&list)).unwrap_or_default();
+    assert_eq!(joined, list.as_str());
     remove_var("AKKU_TEST_STD_REEXPORT");
 }

@@ -16,6 +16,8 @@ use super::cmd::{Cmd, CmdError, CmdOutput};
 ///
 /// ```
 /// use akku::process::{Cmd, Pipeline};
+/// # // These examples use Unix tools (`echo`, `tr`, `sort`, `printf`).
+/// # #[cfg(unix)] {
 ///
 /// let out = Pipeline::new()
 ///     .cmd(Cmd::new("printf").arg("b\\na\\n"))
@@ -24,6 +26,7 @@ use super::cmd::{Cmd, CmdError, CmdOutput};
 ///     .unwrap();
 /// assert!(out.success());
 /// assert_eq!(out.stdout_str().unwrap(), "a\nb\n");
+/// # }
 /// ```
 #[derive(Debug, Clone)]
 pub struct PipelineOutput {
@@ -133,6 +136,8 @@ impl PipelineOutput {
 ///
 /// ```
 /// use akku::process::{Cmd, Pipeline};
+/// # // These examples use Unix tools (`echo`, `tr`, `sort`, `printf`).
+/// # #[cfg(unix)] {
 ///
 /// let out = Pipeline::new()
 ///     .cmd(Cmd::new("echo").arg("one two"))
@@ -140,6 +145,7 @@ impl PipelineOutput {
 ///     .run()
 ///     .unwrap();
 /// assert_eq!(out.stdout_lossy(), "one\ntwo\n");
+/// # }
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct Pipeline {

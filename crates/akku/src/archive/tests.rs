@@ -3,9 +3,12 @@
 //! Covers RFC 1951/1952 golden vectors, roundtrips across sizes and
 //! compressibility, zip-bomb output caps, zip-slip path traversal rejection,
 //! USTAR/PAX long names, and (when the tools exist in the container)
-//! interop with the system `gzip` and `tar`.
+//! interop with the system `gzip` and `tar`. The interop tests run on unix
+//! only: Windows runners ship different (or no) `gzip`, `tar`, `python3`
+//! and `unzip` binaries.
 
 use std::io::{Read, Write};
+#[cfg(unix)]
 use std::process::Command;
 
 use akku::archive::checksum::{adler32, crc32, Adler32, Crc32};
@@ -82,6 +85,7 @@ impl BitBuilder {
 }
 
 /// Whether an external tool exists (used to skip interop tests gracefully).
+#[cfg(unix)]
 fn has_tool(cmd: &str) -> bool {
     Command::new(cmd)
         .arg("--version")
@@ -92,6 +96,7 @@ fn has_tool(cmd: &str) -> bool {
 }
 
 /// Run a tool capturing stdout; `None` on failure or absence.
+#[cfg(unix)]
 fn run_tool(cmd: &str, args: &[&str], cwd: Option<&std::path::Path>) -> Option<Vec<u8>> {
     let mut c = Command::new(cmd);
     c.args(args);
@@ -563,6 +568,7 @@ fn gzip_streaming_decoder_finish_and_garbage() {
     assert!(dec.read_to_end(&mut Vec::new()).is_err());
 }
 
+#[cfg(unix)]
 #[test]
 fn gzip_interop_with_system_gzip() {
     if !has_tool("gzip") {
@@ -890,6 +896,7 @@ fn tar_truncated_archive_rejected() {
     assert!(r.next_entry().unwrap().is_none());
 }
 
+#[cfg(unix)]
 #[test]
 fn tar_interop_with_system_tar() {
     if !has_tool("tar") {
@@ -1239,6 +1246,7 @@ fn zip_malformed_archives_rejected() {
     ));
 }
 
+#[cfg(unix)]
 #[test]
 fn zip_interop_with_system_tools() {
     let python = has_tool("python3");
@@ -1866,4 +1874,171 @@ fn tar_pax_length_must_be_plain_digits() {
     archive.extend_from_slice(&[0u8; 1024]);
     let mut r = TarReader::new(&archive[..]);
     assert_eq!(r.next_entry().unwrap().unwrap().path(), "a");
+}
+
+/// Entry names that Windows would reinterpret: a drive prefix that escapes
+/// the root, an NTFS stream, device names, and stripped trailing dots/spaces.
+#[cfg(windows)]
+const WINDOWS_REINTERPRETED: [&str; 9] = [
+    "a/C:evil.txt",
+    "a/b:stream",
+    "CON",
+    "sub/nul.txt",
+    "x/Aux",
+    "COM1.log",
+    "lpt9",
+    "trail.",
+    "space /x",
+];
+
+#[cfg(unix)]
+#[test]
+fn extract_keeps_windows_reserved_names_literal_on_unix() {
+    // Unix creates every component literally, so these stay valid names.
+    let dir = TempDir::new().unwrap();
+    let mut archive = Vec::new();
+    for name in ["a/b:stream", "CON", "sub/nul.txt", "trail."] {
+        archive.extend(tar_entry_bytes(name, b"x", b'0', None));
+    }
+    archive.extend_from_slice(&[0u8; 1024]);
+    let mut r = TarReader::new(&archive[..]);
+    assert_eq!(
+        r.safe_extract_to(dir.path(), &ExtractOptions::new())
+            .unwrap(),
+        4
+    );
+    assert_eq!(std::fs::read(dir.path().join("a/b:stream")).unwrap(), b"x");
+    assert_eq!(std::fs::read(dir.path().join("trail.")).unwrap(), b"x");
+}
+
+#[cfg(windows)]
+#[test]
+fn extract_rejects_windows_reinterpreted_components() {
+    for name in WINDOWS_REINTERPRETED {
+        let dir = TempDir::new().unwrap();
+        let mut archive = tar_entry_bytes(name, b"pwn", b'0', None);
+        archive.extend_from_slice(&[0u8; 1024]);
+        let mut r = TarReader::new(&archive[..]);
+        let res = r.safe_extract_to(dir.path(), &ExtractOptions::new());
+        assert!(
+            matches!(res, Err(TarError::Extract(ExtractError::UnsafePath(_)))),
+            "tar extractor accepted {name:?}: {res:?}"
+        );
+        assert_eq!(dir.path().read_dir().unwrap().count(), 0, "{name:?}");
+
+        let dir = TempDir::new().unwrap();
+        let bytes = raw_zip(name, b"pwn", 0);
+        let mut r = ZipReader::new(std::io::Cursor::new(bytes)).unwrap();
+        let res = r.safe_extract_to(dir.path(), &ExtractOptions::new());
+        assert!(
+            matches!(res, Err(ZipError::Extract(ExtractError::UnsafePath(_)))),
+            "zip extractor accepted {name:?}: {res:?}"
+        );
+        assert_eq!(dir.path().read_dir().unwrap().count(), 0, "{name:?}");
+    }
+    // Hard-link sources and symlink targets follow the same rules.
+    let dir = TempDir::new().unwrap();
+    let mut archive = tar_entry_bytes("h", b"", b'1', Some("a/C:evil.txt"));
+    archive.extend_from_slice(&[0u8; 1024]);
+    let mut r = TarReader::new(&archive[..]);
+    assert!(matches!(
+        r.safe_extract_to(dir.path(), &ExtractOptions::new()),
+        Err(TarError::Extract(ExtractError::UnsafePath(_)))
+    ));
+    let mut archive = tar_entry_bytes("l", b"", b'2', Some("d/C:evil"));
+    archive.extend_from_slice(&[0u8; 1024]);
+    let mut r = TarReader::new(&archive[..]);
+    assert!(matches!(
+        r.safe_extract_to(dir.path(), &ExtractOptions::new()),
+        Err(TarError::Extract(ExtractError::SymlinkEscape(_)))
+    ));
+}
+
+#[cfg(windows)]
+#[test]
+fn tar_symlinks_are_unsupported_on_windows_but_escapes_still_rejected() {
+    // Escaping targets are refused before any platform check.
+    for target in ["../../outside", "/etc/passwd", "C:/x", "d/../.."] {
+        let dir = TempDir::new().unwrap();
+        let mut archive = tar_entry_bytes("l", b"", b'2', Some(target));
+        archive.extend_from_slice(&[0u8; 1024]);
+        let mut r = TarReader::new(&archive[..]);
+        let res = r.safe_extract_to(dir.path(), &ExtractOptions::new());
+        assert!(
+            matches!(res, Err(TarError::Extract(ExtractError::SymlinkEscape(_)))),
+            "symlink -> {target} gave {res:?}"
+        );
+    }
+    // An in-root link is valid but cannot be created: a typed Unsupported.
+    let dir = TempDir::new().unwrap();
+    let mut archive = tar_entry_bytes("base.txt", b"root", b'0', None);
+    archive.extend(tar_entry_bytes("ok", b"", b'2', Some("base.txt")));
+    archive.extend_from_slice(&[0u8; 1024]);
+    let mut r = TarReader::new(&archive[..]);
+    assert!(matches!(
+        r.safe_extract_to(dir.path(), &ExtractOptions::new()),
+        Err(TarError::Extract(ExtractError::Unsupported(_)))
+    ));
+    assert!(std::fs::symlink_metadata(dir.path().join("ok")).is_err());
+}
+
+/// Windows twin of the unix pre-existing-symlink tests. Creating symlinks
+/// needs a privilege (or developer mode), so the test skips without it.
+#[cfg(windows)]
+#[test]
+fn tar_extract_never_writes_through_pre_existing_windows_symlinks() {
+    use std::os::windows::fs::{symlink_dir, symlink_file};
+
+    let outside = TempDir::new().unwrap();
+    let secret = outside.path().join("secret.txt");
+    std::fs::write(&secret, b"host data").unwrap();
+    let dir = TempDir::new().unwrap();
+    if let Err(err) = symlink_dir(outside.path(), dir.path().join("esc")) {
+        eprintln!("skipping: cannot create symlinks here ({err})");
+        return;
+    }
+    symlink_file(&secret, dir.path().join("f")).unwrap();
+    let mut opts = ExtractOptions::new();
+    opts.overwrite_existing = true;
+
+    // (a) A file entry through a symlinked directory.
+    let mut archive = tar_entry_bytes("esc/data.txt", b"pwn", b'0', None);
+    archive.extend_from_slice(&[0u8; 1024]);
+    let mut r = TarReader::new(&archive[..]);
+    assert!(matches!(
+        r.safe_extract_to(dir.path(), &opts),
+        Err(TarError::Extract(ExtractError::SymlinkEscape(_)))
+    ));
+    assert!(!outside.path().join("data.txt").exists());
+
+    // (b) Overwriting a file symlink, even with overwrite enabled.
+    let mut archive = tar_entry_bytes("f", b"pwned", b'0', None);
+    archive.extend_from_slice(&[0u8; 1024]);
+    let mut r = TarReader::new(&archive[..]);
+    assert!(matches!(
+        r.safe_extract_to(dir.path(), &opts),
+        Err(TarError::Extract(ExtractError::SymlinkEscape(_)))
+    ));
+
+    // (c) Hard links to a symlink or through a symlinked directory.
+    for source in ["f", "esc/secret.txt"] {
+        let mut archive = tar_entry_bytes("h", b"", b'1', Some(source));
+        archive.extend_from_slice(&[0u8; 1024]);
+        let mut r = TarReader::new(&archive[..]);
+        let res = r.safe_extract_to(dir.path(), &opts);
+        assert!(
+            matches!(res, Err(TarError::Extract(ExtractError::SymlinkEscape(_)))),
+            "hard link to {source} gave {res:?}"
+        );
+    }
+    assert_eq!(std::fs::read(&secret).unwrap(), b"host data");
+
+    // (d) Zip entries through the symlinked directory.
+    let bytes = raw_zip("esc/zip.txt", b"pwn", 0);
+    let mut r = ZipReader::new(std::io::Cursor::new(bytes)).unwrap();
+    assert!(matches!(
+        r.safe_extract_to(dir.path(), &opts),
+        Err(ZipError::Extract(ExtractError::SymlinkEscape(_)))
+    ));
+    assert!(!outside.path().join("zip.txt").exists());
 }

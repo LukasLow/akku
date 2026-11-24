@@ -17,6 +17,13 @@
 //! (zip-bomb guard), and every extraction path validates entry paths before
 //! writing (zip-slip and symlink-escape guards).
 //!
+//! On Windows, extraction additionally rejects path components the Win32
+//! layer would reinterpret: any component containing `:` (a drive prefix
+//! such as `C:x` or an NTFS alternate data stream), reserved device names
+//! (`CON`, `NUL`, `COM1`, `LPT1.txt`, ...), and components ending in `.` or
+//! a space (silently stripped by Windows). Symlink entries are refused there
+//! with [`ExtractError::Unsupported`](error::ExtractError::Unsupported).
+//!
 //! # Examples
 //!
 //! Compose the family: build a tar archive in memory, wrap it in gzip, unwrap
@@ -165,9 +172,54 @@ pub(crate) fn join_comps(dest_root: &Path, comps: &[String]) -> PathBuf {
 /// escapes too, so extraction can never write through a link.
 pub(crate) fn safe_target(dest_root: &Path, name: &str) -> Result<PathBuf, ExtractError> {
     let comps = safe_components(name)?;
+    ensure_host_components(comps.iter().map(String::as_str))
+        .map_err(|why| ExtractError::UnsafePath(format!("{why}: {name}")))?;
     let target = join_comps(dest_root, &comps);
     ensure_no_symlink_on_path(dest_root, &comps)?;
     Ok(target)
+}
+
+/// Rejects components the host filesystem would reinterpret instead of
+/// creating them literally under the destination root.
+///
+/// On Windows, `PathBuf::push("C:x")` replaces the whole path (escaping the
+/// root), `name:stream` addresses an NTFS alternate data stream, reserved
+/// device names open devices, and trailing dots/spaces are stripped so two
+/// entry names alias one file. Elsewhere every component is literal.
+#[cfg(windows)]
+fn ensure_host_components<'a>(
+    parts: impl IntoIterator<Item = &'a str>,
+) -> Result<(), &'static str> {
+    const DEVICES: [&str; 4] = ["CON", "PRN", "AUX", "NUL"];
+    for part in parts {
+        if part.contains(':') {
+            return Err("`:` in a path component (drive prefix or alternate data stream)");
+        }
+        if part.ends_with('.') || part.ends_with(' ') {
+            return Err("path component ends in `.` or a space");
+        }
+        // Device names stay reserved with any extension and trailing spaces.
+        let stem = part.split('.').next().unwrap_or(part).trim_end();
+        let upper = stem.to_ascii_uppercase();
+        let numbered = (upper.starts_with("COM") || upper.starts_with("LPT"))
+            && upper.len() == 4
+            && upper.as_bytes()[3].is_ascii_digit();
+        let superscript = upper.len() > 3
+            && (upper.starts_with("COM") || upper.starts_with("LPT"))
+            && matches!(&upper[3..], "\u{b9}" | "\u{b2}" | "\u{b3}");
+        if DEVICES.contains(&upper.as_str()) || numbered || superscript {
+            return Err("reserved Windows device name");
+        }
+    }
+    Ok(())
+}
+
+/// Every component is created literally outside Windows.
+#[cfg(not(windows))]
+fn ensure_host_components<'a>(
+    _parts: impl IntoIterator<Item = &'a str>,
+) -> Result<(), &'static str> {
+    Ok(())
 }
 
 /// Reject if any component of the relative path exists and is a symlink.
@@ -228,6 +280,10 @@ pub(crate) fn resolve_symlink_target(
         .iter()
         .map(String::as_str)
         .collect();
+    let named = target
+        .split(['/', '\\'])
+        .filter(|part| !matches!(*part, "" | "." | ".."));
+    ensure_host_components(named).map_err(escape)?;
     let mut seen_normal = false;
     for part in target.split(['/', '\\']) {
         match part {
@@ -262,6 +318,8 @@ pub(crate) fn resolve_hardlink_source(
     target: &str,
 ) -> Result<PathBuf, ExtractError> {
     let comps = safe_components(target)?;
+    ensure_host_components(comps.iter().map(String::as_str))
+        .map_err(|why| ExtractError::UnsafePath(format!("{why}: {target}")))?;
     ensure_no_symlink_on_path(dest_root, &comps)?;
     let src = join_comps(dest_root, &comps);
     match std::fs::symlink_metadata(&src) {

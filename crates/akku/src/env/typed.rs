@@ -150,7 +150,9 @@ pub fn get_bool_or(key: &str, default: bool) -> bool {
 /// ```
 /// use akku::env::{get_list, set_var};
 ///
-/// set_var("AKKU_TYPED_LIST", "tools:/usr/bin:");
+/// // `:` on Unix, `;` on Windows.
+/// let sep = if cfg!(windows) { ";" } else { ":" };
+/// set_var("AKKU_TYPED_LIST", format!("tools{sep}/usr/bin{sep}"));
 /// assert_eq!(get_list("AKKU_TYPED_LIST"), vec!["tools", "/usr/bin"]);
 /// assert!(get_list("AKKU_TYPED_LIST_UNSET").is_empty());
 /// ```
@@ -195,7 +197,8 @@ pub fn get_csv(key: &str) -> Vec<String> {
 /// use std::path::PathBuf;
 /// use akku::env::{get_paths, set_var};
 ///
-/// set_var("AKKU_TYPED_PATHS", "/bin:/usr/bin");
+/// let joined = std::env::join_paths(["/bin", "/usr/bin"]).unwrap();
+/// set_var("AKKU_TYPED_PATHS", joined);
 /// assert_eq!(
 ///     get_paths("AKKU_TYPED_PATHS"),
 ///     vec![PathBuf::from("/bin"), PathBuf::from("/usr/bin")]

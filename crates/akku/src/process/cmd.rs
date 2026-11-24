@@ -31,10 +31,13 @@ enum EnvOp {
 ///
 /// ```
 /// use akku::process::Cmd;
+/// # // These examples use Unix tools (`echo`, `tr`, `sort`, `printf`).
+/// # #[cfg(unix)] {
 ///
 /// let out = Cmd::new("echo").arg("hi").run().unwrap();
 /// assert!(out.success());
 /// assert_eq!(out.stdout_str().unwrap(), "hi\n");
+/// # }
 /// ```
 #[derive(Debug, Clone)]
 pub struct CmdOutput {
@@ -185,12 +188,15 @@ impl Error for CmdError {}
 ///
 /// ```
 /// use akku::process::Cmd;
+/// # // These examples use Unix tools (`echo`, `tr`, `sort`, `printf`).
+/// # #[cfg(unix)] {
 ///
 /// let out = Cmd::new("tr").arg("a-z").arg("A-Z")
 ///     .stdin_bytes(b"shh".as_slice())
 ///     .run()
 ///     .unwrap();
 /// assert_eq!(out.stdout_str().unwrap(), "SHH");
+/// # }
 /// ```
 #[derive(Debug, Clone)]
 pub struct Cmd {
