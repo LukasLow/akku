@@ -1241,7 +1241,9 @@ fn zip_malformed_archives_rejected() {
 
 #[test]
 fn zip_interop_with_system_tools() {
-    if !has_tool("python3") && !has_tool("unzip") {
+    let python = has_tool("python3");
+    let unzip = has_tool("unzip");
+    if !python && !unzip {
         eprintln!("skipping: no unzip/python3 in the container (alpine busybox only)");
         return;
     }
@@ -1254,7 +1256,8 @@ fn zip_interop_with_system_tools() {
     let bytes = w.finish().unwrap().into_inner();
     let zip_path = dir.path().join("a.zip");
     std::fs::write(&zip_path, &bytes).unwrap();
-    if has_tool("python3") {
+    if python {
+        // Ours -> python: extract and compare both members.
         let outdir = dir.path().join("py");
         std::fs::create_dir(&outdir).unwrap();
         let status = Command::new("python3")
@@ -1265,28 +1268,41 @@ fn zip_interop_with_system_tools() {
             .arg(&outdir)
             .status()
             .unwrap();
-        assert!(status.success());
+        assert!(status.success(), "python3 -m zipfile -e failed");
+        assert_eq!(std::fs::read(outdir.join("a.txt")).unwrap(), b"hello zip\n");
         assert_eq!(
             std::fs::read(outdir.join("b.txt")).unwrap(),
             b"deflate me, deflate me\n"
         );
-        // Read a python-created zip back.
-        let src = dir.path().join("src.pyz");
+        // Python -> ours: create from a real file with relative names so the
+        // stored entry name is exactly `hello.txt`.
+        std::fs::write(dir.path().join("hello.txt"), b"hello from python\n").unwrap();
         let status = Command::new("python3")
             .arg("-m")
             .arg("zipfile")
             .arg("-c")
-            .arg(&src)
+            .arg("src.zip")
             .arg("hello.txt")
-            .arg(zip_path.to_str().unwrap())
-            .status();
-        // The -c path needs a real file argument; skip silently otherwise.
-        if status.map(|s| s.success()).unwrap_or(false) {
-            let bytes = std::fs::read(&src).unwrap();
-            let r = ZipReader::new(std::io::Cursor::new(bytes)).unwrap();
-            assert!(r.entry_by_name("hello.txt").is_some());
-        }
-    } else if has_tool("unzip") {
+            .current_dir(dir.path())
+            .status()
+            .unwrap();
+        assert!(status.success(), "python3 -m zipfile -c failed");
+        let bytes = std::fs::read(dir.path().join("src.zip")).unwrap();
+        let mut r = ZipReader::new(std::io::Cursor::new(bytes)).unwrap();
+        assert!(r.entry_by_name("hello.txt").is_some());
+        assert_eq!(
+            r.read_entry_by_name("hello.txt", 1024).unwrap(),
+            b"hello from python\n"
+        );
+    }
+    if unzip {
+        // Ours -> unzip: integrity test plus extraction.
+        let status = Command::new("unzip")
+            .arg("-tq")
+            .arg(&zip_path)
+            .status()
+            .unwrap();
+        assert!(status.success(), "unzip -t rejected our archive");
         let outdir = dir.path().join("uz");
         std::fs::create_dir(&outdir).unwrap();
         let status = Command::new("unzip")
@@ -1298,6 +1314,10 @@ fn zip_interop_with_system_tools() {
             .unwrap();
         assert!(status.success());
         assert_eq!(std::fs::read(outdir.join("a.txt")).unwrap(), b"hello zip\n");
+        assert_eq!(
+            std::fs::read(outdir.join("b.txt")).unwrap(),
+            b"deflate me, deflate me\n"
+        );
     }
 }
 

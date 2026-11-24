@@ -199,9 +199,11 @@ fn pipeline_feeds_the_first_stage_stdin() {
 
 #[test]
 fn pipeline_collects_stderr_per_stage_in_order() {
+    // Each stage writes stderr before stdout: stage two never reads its
+    // stdin, so stage one may be killed by SIGPIPE on its stdout write.
     let out = Pipeline::new()
-        .cmd(sh("echo one-out; echo one-err 1>&2"))
-        .cmd(sh("echo two-out; echo two-err 1>&2"))
+        .cmd(sh("echo one-err 1>&2; echo one-out"))
+        .cmd(sh("echo two-err 1>&2; echo two-out"))
         .run()
         .unwrap();
     assert_eq!(
