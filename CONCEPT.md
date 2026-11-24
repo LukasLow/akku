@@ -72,11 +72,17 @@ The Rust linker plus LTO removes unused code from the final binary. Features are
 - **Convenience bundles** (`web`, `cli`, `data`, `sci`, `full`) group typical project setups.
 - `cargo tree -e features -p akku` remains the check for the actual dependency graph.
 
-## 6. WASM model (strictly two-part)
+## 6. Native first and WASM model
+
+### Native first
+
+akku is all-in-one and optimized for **native platforms** — macOS, Windows, Linux, and mobile (iOS/Android) — fast and absolutely safe. `wasm32` is **best-effort**: supported where it costs nothing on native, and never allowed to make a native code path slower or less safe. The `wasm32` CI check therefore stays optional as an early warning, while native checks are required ([`AGENTS.md`](AGENTS.md) §3 and rule 11).
+
+### WASM model (strictly two-part)
 
 1. **Code that runs *in* WASM (`wasm32` target):**
    - There is no separate `forwasm::` or `async::wasm` module.
-   - Client and compute modules (`http::client`, `ws::client`, `sse::client`, `gpu`, `json`, `url`, `time`, `units`, `math`, `pic`, …) support `wasm32` transparently behind the same API via `#[cfg(target_arch = "wasm32")]`.
+   - Where it has zero cost on native, client and compute modules (`http::client`, `ws::client`, `sse::client`, `gpu`, `json`, `url`, `time`, `units`, `math`, `pic`, …) support `wasm32` behind the same API via `#[cfg(target_arch = "wasm32")]`.
    - Native-only server and OS parts (`http::server`, `ws::server`, `net` sockets, `process`, `fs::watch`, `os`) are hidden automatically on `wasm32`.
 2. **Code that runs WASM modules itself (host/guest runtime):**
    - Lives in its own module `akku::wasm` (`wasm::host`, `wasm::guest`).
@@ -118,6 +124,6 @@ akku succeeds when:
 - a real project needs only `akku` + `std` in its `Cargo.toml`,
 - Wave 1 everyday modules (`html`, `json`, `csv`, `toml`, `url`, `base64`, `hex`, `cli`, `log`, `time`, `units`, `math`, …) run with **0 external dependencies**,
 - the public API stays stable across `adapter` → `native`/`fork` switches,
-- client code (`http::client`, `ws::client`, `json`, `units`, …) compiles on `wasm32` without special imports,
+- native targets (macOS, Windows, Linux, mobile) run fast and safely, and best-effort `wasm32` client/compute code compiles without special imports where it costs nothing on native,
 - `cargo test`, `cargo clippy`, `cargo doc`, and `cargo deny`/`audit` are green,
 - the library can grow cleanly from ~58 core modules to 300+ along a clear roadmap ([`docs/ROADMAP.md`](docs/ROADMAP.md)).

@@ -3,7 +3,7 @@
 Single source of truth for how any change reaches `main`. AGENTS.md only summarizes this file.
 
 ## Purpose
-Land one Worker scope on `main` through a reviewed pull request. `main` is protected: a PR and the green `test` check are required, force-push is disabled.
+Land one Worker scope on `main` through a reviewed pull request. `main` is protected: a PR and green `test`, `os-test (macos-latest)`, and `os-test (windows-latest)` checks are required, force-push is disabled.
 
 ## Inputs
 - A Worker report ending in a `COMMIT REQUEST`.
@@ -53,7 +53,7 @@ Land one Worker scope on `main` through a reviewed pull request. `main` is prote
 - A commit on the feature branch, a PR with an akku-pr body, a `CHECKER APPROVED <sha>` comment, a merge commit on `main`.
 
 ## Review Gate
-Mergeable when: the `test` check is green, the Checker approval names the head SHA, and a changie fragment or the `skip-changelog` label is present.
+Mergeable when: `test`, `os-test (macos-latest)`, and `os-test (windows-latest)` are green, the Checker approval names the head SHA, and a changie fragment or the `skip-changelog` label is present.
 
 ## Handoff
 Merged → Orcha reports the merge to the human and suggests a fresh session after a wave. Rejected → [BugFix](BugFix.md) or back to the Worker scope.

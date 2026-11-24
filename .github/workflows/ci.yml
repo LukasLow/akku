@@ -2,6 +2,7 @@ name: ci
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches: [main]
 
@@ -49,7 +50,7 @@ jobs:
           !contains(github.event.pull_request.labels.*.name, 'dependencies')
         run: sh .github/scripts/check-changes.sh
 
-  # Not required yet (branch protection requires only `test`).
+  # Optional by design (native first), never make required.
   wasm32:
     runs-on: ubuntu-latest
     steps:
@@ -62,7 +63,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p akku --no-default-features --target wasm32-unknown-unknown --locked
 
-  # Not required yet: green on these runners is not verified in CI history.
+  # Required by branch protection: keep the job names `os-test (macos-latest)` and `os-test (windows-latest)`.
   os-test:
     name: os-test (${{ matrix.os }})
     strategy:
