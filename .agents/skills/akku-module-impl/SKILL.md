@@ -1,69 +1,45 @@
 ---
 name: akku-module-impl
-description: Step-by-step Worker playbook for implementing or fixing a zero-dependency Rust module in akku with tests, docs, DoS guardrails, and meta.toml.
+description: Worker playbook for implementing or fixing an akku module. Use when assigned a new module, a NewLib gate (G3/G4), a bugfix batch, or a migration of one module.
 ---
 
-# Akku Module Implementation Skill (Worker)
+# Module implementation (Worker)
 
-Use this skill when acting as a **Worker** implementing a new `akku::<module>` or applying verified bugfixes to an existing module.
+You are a Worker: your prompt opened with `hello Worker I am Orcha`. Work only in your assigned scope, spawn no subagents, and never commit.
 
-## 1. Pre-Flight Checks
+## 1. Pre-flight
 
-1. Read [`Namespace.md`](../../../Namespace.md) to verify the exact module path, sub-structure (`server`/`client` live inside protocol modules; provider names live inside domain modules like `kv::redis`, `sql::sqlite`), and forbidden top-level names.
-2. Check [`crates/akku/src/lib.rs`](../../../crates/akku/src/lib.rs) and [`crates/akku/Cargo.toml`](../../../crates/akku/Cargo.toml) to see existing conventions and `[[test]]` registrations.
-3. Confirm Rust toolchain constraints: **Rust 1.85**, **Edition 2021**, `#![forbid(unsafe_code)]`, `#![deny(missing_docs)]`, **zero external dependencies** (for `native` modules; `std`/`alloc`/`core` only).
+1. Read the module's `_dev/DESIGN.md` if it exists; it holds the agreed API and seams.
+2. Check the public path against [`Namespace.md`](../../../Namespace.md): flat first; `server`/`client` live inside protocol modules; providers live inside domain modules (`kv::redis`, `sql::sqlite`).
+3. Toolchain: Rust 1.85, edition 2021, `#![deny(missing_docs)]`, zero external dependencies for `native` modules (`std`/`alloc`/`core` only). `unsafe` only per [`akku-unsafe`](../akku-unsafe/SKILL.md).
 
-## 2. Module Folder Layout
+Done when you can name the module path, its status (`native`/`fork`/`adapter`), and the seams you will test.
 
-Create or update everything self-contained under `crates/akku/src/<module>/`:
+## 2. Layout
 
-```text
-crates/akku/src/<module>/
-  mod.rs          # public API, module-level rustdoc with quick example
-  ...             # clean internal submodules (keep files modular & readable)
-  tests.rs        # public-API integration tests (registered via [[test]])
-  meta.toml       # catalog metadata
-```
+Follow [`akku-module-layout`](../akku-module-layout/SKILL.md) for folders, wiring, `meta.toml`, and what goes in rustdoc versus `_dev/`.
 
-### `meta.toml` Schema
+## 3. Tests first
 
-```toml
-name = "<module>"
-status = "native" # "native" | "fork" | "adapter"
-wasm32 = true     # true if usable on wasm32 without OS-only sockets/fs
-wave = 2          # 1 | 2 | 3
-summary = "One-line English summary of the module."
-owners = ["LukasLow"]
-tags = ["<module>", "<domain>", "<category>"]
-```
+Follow [`akku-tdd`](../akku-tdd/SKILL.md): red at the public API, then green. A bugfix starts with a regression test that fails for the reported reason ([`BugFix`](../../workflows/BugFix.md)).
 
-### Wiring (when adding a brand-new module)
+## 4. Guardrails
 
-- Export `pub mod <module>;` in alphabetical order in [`crates/akku/src/lib.rs`](../../../crates/akku/src/lib.rs).
-- Register the integration test in [`crates/akku/Cargo.toml`](../../../crates/akku/Cargo.toml):
-  ```toml
-  [[test]]
-  name = "<module>"
-  path = "src/<module>/tests.rs"
-  ```
+Untrusted input is the default assumption. The code holds against every bug class in [`akku-security-audit`](../akku-security-audit/SKILL.md) §Checklist; in practice:
 
-## 3. Mandatory Engineering & Security Guardrails
+- Checked arithmetic and `.get(..)` on every untrusted length, offset, and index; malformed input returns a typed error.
+- Allocation only after a length is validated against a cap; read progressively otherwise.
+- Every DoS limit (`max_depth`, `max_bytes`, `max_items`, `max_expansion`, …) has a sane default and a builder setter, and is checked **before** the allocation or clone it guards.
+- Iterative `Drop` for arbitrarily nested trees; depth tracked on every recursive path.
+- Linear-time parsers and serializers; buffered I/O with one write per frame.
 
-Every `akku` module MUST be resilient against untrusted input by default:
+## 5. Docs
 
-- **Bounds & Checked Arithmetic:** Use `checked_add`/`checked_sub`/`checked_mul` and slice `.get(..)` on all untrusted lengths, offsets, headers, and indices. Never panic on malformed input.
-- **No Pre-Validation OOM:** Never `vec![0; untrusted_len]` or `Vec::with_capacity(untrusted_len)` before validating against a configurable cap or reading progressively.
-- **Explicit DoS Limits:** Enforce sensible default caps (`max_depth`, `max_bytes`, `max_output_bytes`, `max_items`, `max_expansion`) with builder setters so callers can tune them.
-- **Stack Safety:** Watch both **parsing recursion** AND **recursive `Drop`** on deeply nested trees/ASTs/values (implement iterative `Drop` where arbitrary nesting is possible).
-- **No Amplification Bombs:** Check expansion limits *before* cloning/replacing/allocating (e.g. template `replace`, YAML anchors/aliases, archive decompression ratios, regex repetitions).
-- **Path Safety (Archives/FS):** Canonicalize/validate relative paths; reject `..`, absolute paths, symlinks/hardlinks escaping the destination root.
-- **Streaming & I/O Correctness:** Handle chunk boundaries cleanly (never hang or lose buffered events on partial reads), buffer header+payload writes to avoid Nagle stalls, and avoid per-message syscalls (e.g. opening `/dev/urandom` per frame).
-- **Algorithmic Complexity:** Avoid hidden $O(n^2)$ loops in parsers, serializers, diffing, text processing, and namespace/table lookups.
-- **Clean Recovery:** On WAL/file persistence, treat partial or zero-filled crash tails safely without silently dropping earlier valid records.
+- Rustdoc on every public item, with a runnable example in the module-level `//!` docs.
+- New decisions, rejected options, and deferred APIs go to `_dev/DESIGN.md` / `_dev/TODO.md` when the module has `_dev/`.
+- User-facing change → changie fragment per [`akku-pr`](../akku-pr/SKILL.md).
 
-## 4. Verification Inside `smd`
-
-Run all checks for your module inside `smd` before reporting back to Orcha:
+## 6. Verify in `smd`
 
 ```sh
 smd cargo test -p akku --test <module>
@@ -73,4 +49,8 @@ smd cargo clippy -p akku --all-targets --all-features -- -D warnings
 smd cargo fmt --all -- --check
 ```
 
-If you added or edited `meta.toml`, note it in your report so Orcha can run `smd cargo run -p akku-cli -- catalog gen`.
+Done when all five pass. If `meta.toml` changed, say so; Orcha runs `catalog gen`.
+
+## 7. Report
+
+Report concisely to Orcha: files changed, test names added, anything left open. End with the `COMMIT REQUEST` block defined in [`PullRequest`](../../workflows/PullRequest.md).

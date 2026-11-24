@@ -22,12 +22,12 @@
 - [x] `main` protected (2026-11-24): PR required (0 approvals so agents can merge), required check `test`, enforced for admins, no force-push/deletion. The release workflow only reacts to merges and creates tags via API, so it is unaffected.
 
 ### 0.3 Governance system (`.agents/`)
-- [ ] Study `~/home/repos/mojoakku` (skills, workflows, per-lib docs) and Matt Pocock's public skills; adopt what fits.
-- [ ] `.agents/skills/` — expand into a full skill set (module impl, audit, smd, docs, release, PR, scan, …).
-- [ ] `.agents/workflows/` — at least: **new-lib intake** (human says "open a PR: add X because Y" → proposal PR → Worker/Checker PRs), bugfix, audit, commit/PR, release, module migration.
-- [ ] Rewrite the Commit Workflow for PR-only (Checker commits on a branch and opens or updates the PR; nothing lands on `main` directly).
-- [ ] AGENTS.md = everything maintainers/agents need, with details linked into `.agents/`. README = everything newcomers need.
-- [ ] Translate German docs to English: `CONCEPT.md`, `Namespace.md`, and the remaining sections of `docs/`. (Open: keep `hallo Worker ich bin Orcha` as a fixed handshake token?)
+- [x] Study `~/home/repos/mojoakku` (skills, workflows, per-lib docs) and Matt Pocock's public skills; adopt what fits. (Adopted: workflow section shape, `_dev/` per-module docs, one branch/PR per lib, session reuse; Pocock `writing-for-agents`, `tdd`, `pr`, `diagnosing-bugs`, credited MIT.)
+- [x] `.agents/skills/` — expand into a full skill set (module impl, audit, smd, docs, release, PR, scan, …). (Skills: `akku-module-impl`, `akku-module-layout`, `akku-tdd`, `akku-security-audit`, `akku-unsafe`, `akku-pr`, `akku-smd-workflow`; release and scan are workflows; index in `.agents/README.md`.)
+- [x] `.agents/workflows/` — at least: **new-lib intake** (human says "open a PR: add X because Y" → proposal PR → Worker/Checker PRs), bugfix, audit, commit/PR, release, module migration. (`NewLib` G1–G6, `BugFix`, `Audit`, `PullRequest`, `Release`, `ModuleMigration`.)
+- [x] Rewrite the Commit Workflow for PR-only (Checker commits on a branch and opens or updates the PR; nothing lands on `main` directly). (`.agents/workflows/PullRequest.md`.)
+- [ ] AGENTS.md = everything maintainers/agents need, with details linked into `.agents/`. README = everything newcomers need. (AGENTS.md part done; README part → 0.5 README rewrite.)
+- [ ] Translate German docs to English: `CONCEPT.md`, `Namespace.md`, and the remaining sections of `docs/`. (Resolved: the handshake token is English, `hello Worker I am Orcha`; AGENTS.md and `.agents/` use it.)
 
 ### 0.4 Policies
 - [ ] **unsafe policy:** allowed **only** where unavoidable (FFI, OS syscalls/sockets, platform APIs), never for convenience or speed. Mechanics: crate-level `#![deny(unsafe_code)]`, `#[allow(unsafe_code)]` only in designated `sys` submodules, every block has a `// SAFETY:` comment (`clippy::undocumented_unsafe_blocks`), CI enforces an allowlist of files. Update AGENTS.md, CONCEPT.md and the skills.

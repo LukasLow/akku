@@ -1,57 +1,68 @@
 ---
 name: akku-smd-workflow
-description: Operational reference for running cargo tests, clippy, fmt, docs, catalog generation, and release benchmarks inside the smd container.
+description: Command reference for running cargo test, clippy, fmt, doc, package, catalog, and benchmarks inside the smd container. Use before running any build, test, lint, or script command in akku.
 ---
 
-# Akku `smd` Container Workflow Skill
+# `smd` command reference
 
-**Never run `cargo`, `rustc`, or build scripts on the host.** Always execute via `smd` using [`smd.v0.6.toml`](../../../smd.v0.6.toml).
+Every cargo/rustc/build command runs through `smd` from the repo root, using [`smd.v0.6.toml`](../../../smd.v0.6.toml) (Rust 1.85, Alpine/musl). Host-only exceptions: `git` (commits are blocked inside `smd`), `gh`, and extra toolchains via `nix shell .#` ([`flake.nix`](../../../flake.nix), e.g. the wasm32 check).
 
-## 1. Everyday Commands
+## Module (Worker)
 
 ```sh
-# Single module tests (fast feedback for Workers)
 smd cargo test -p akku --test <module>
 smd cargo test -p akku --lib <module>
 smd cargo test -p akku --doc <module>
-
-# Full workspace checks (for Orcha before finishing a batch)
-smd cargo test --workspace --all-features
-smd cargo test -p akku --no-default-features
-smd cargo clippy --workspace --all-targets --all-features -- -D warnings
-smd cargo doc --workspace --no-deps
+smd cargo clippy -p akku --all-targets --all-features -- -D warnings
 smd cargo fmt --all -- --check
 ```
 
-## 2. Chained Commands & Shell Redirection
+## Workspace (Orcha, Checker commit gate)
 
-Any command containing `&&`, `||`, `|`, or `>` MUST be wrapped in `'{...}'`:
+These mirror CI ([`.github/workflows/ci.yml`](../../../.github/workflows/ci.yml)):
 
 ```sh
-smd '{cargo fmt --all && cargo clippy -p akku --all-targets --all-features -- -D warnings && cargo test -p akku --test ws}'
+smd cargo fmt --all -- --check
+smd cargo clippy --workspace --all-targets -- -D warnings
+smd cargo clippy --workspace --all-targets --all-features -- -D warnings
+smd cargo test -p akku --no-default-features --locked
+smd cargo test --workspace --all-features --locked
+smd '{RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps}'
 ```
 
-## 3. Catalog Generation & Verification
+## Catalog
 
-Whenever a module is added, removed, or its `meta.toml` changes:
+After a module is added or removed, or a `meta.toml` changes:
 
 ```sh
-smd cargo run -p akku-cli -- catalog gen
+smd cargo run -p akku-cli -- catalog gen     # writes docs/CATALOG.md + docs/catalog.json
 smd cargo run -p akku-cli -- catalog check
 ```
 
-This regenerates [`docs/CATALOG.md`](../../../docs/CATALOG.md) and [`docs/catalog.json`](../../../docs/catalog.json).
+## Packaging
 
-## 4. Release Benchmarks & Stress Checks
+```sh
+smd cargo package -p akku --list --allow-dirty   # no `_dev` path may appear
+```
 
-Always benchmark in `--release` inside `smd` (debug builds distort throughput by 10x-50x). If using a temporary example/test harness, delete it immediately after running and verify `git status` is clean.
+## Shell syntax
+
+Wrap any line with `&&`, `||`, `|`, `>`, or env assignments in quoted braces so the container shell runs it:
+
+```sh
+smd '{cargo fmt --all && cargo test -p akku --test ws}'
+```
+
+## Benchmarks
+
+Benchmark only in `--release` (debug distorts throughput 10-50x). Delete temporary harnesses afterwards and confirm `git status` shows only your scope.
 
 ```sh
 smd cargo test -p akku --release --test <module> -- --nocapture
 ```
 
-## 5. Container Lifecycle & Notes
+## Container
 
-- Default `smd <cmd>` reuses persistent container `akku_s` (keeps Cargo target/registry cache warm).
-- `smd --close` removes `akku_s` if a clean rebuild of the container image is ever needed.
-- `git commit` is blocked inside `smd` by design (`block_cmd = ["git commit"]` in `smd.v0.6.toml`); commits are created on the host only by a Checker via the [Commit Workflow](../../../AGENTS.md#commit-workflow) (Worker commit request → Checker gate → commit), or by the human.
+- `smd <cmd>` reuses the session container `akku_s` (warm target and registry caches).
+- `smd -t <cmd>` runs in a throwaway container with `.env` protection.
+- `smd --open` opens a shell; `smd --close` removes `akku_s` (for an image rebuild after editing `[dockerfile]`).
