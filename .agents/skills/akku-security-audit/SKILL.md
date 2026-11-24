@@ -53,3 +53,7 @@ Apply every item to every file in scope.
 ```
 
 Severity: **CRITICAL** = exploitable, panic/crash on input, or data loss. **MEDIUM** = wrong result, significant slowdown, or a weakened guard. **LOW** = edge case or hygiene. Orcha records findings in the module's `_dev/AUDIT.md` (see [`Audit`](../../workflows/Audit.md)).
+
+## Worker self-audit
+
+During a [ModuleMigration](../../workflows/ModuleMigration.md) a Worker may apply this checklist to its own module and log the result in `_dev/AUDIT.md`. The Read-only rule does not apply to it; the commit-gate Checker re-verifies every row.

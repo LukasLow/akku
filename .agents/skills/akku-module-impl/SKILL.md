@@ -35,7 +35,7 @@ Untrusted input is the default assumption. The code holds against every bug clas
 
 ## 5. Docs
 
-- Rustdoc on every public item, with a runnable example in the module-level `//!` docs.
+- Rustdoc on every public item, with a runnable example in the module-level `//!` docs. User-relevant consequences (not constant-time, partial writes on error, panics) go in rustdoc; the reasons go in `_dev/DESIGN.md`.
 - New decisions, rejected options, and deferred APIs go to `_dev/DESIGN.md` / `_dev/TODO.md` when the module has `_dev/`.
 - User-facing change → changie fragment per [`akku-pr`](../akku-pr/SKILL.md).
 
@@ -46,10 +46,11 @@ smd cargo test -p akku --test <module>
 smd cargo test -p akku --lib <module>
 smd cargo test -p akku --doc <module>
 smd cargo clippy -p akku --all-targets --all-features -- -D warnings
+smd '{RUSTDOCFLAGS="-D warnings" cargo doc -p akku --no-deps}'
 smd cargo fmt --all -- --check
 ```
 
-Done when all five pass. If `meta.toml` changed, say so; Orcha runs `catalog gen`.
+Done when all six pass. If your module's `meta.toml` changed, run `smd cargo run -p akku-cli -- catalog gen` and `catalog check`, and list `docs/CATALOG.md` and `docs/catalog.json` in the commit request. Adding or removing a module (`lib.rs` wiring) stays with Orcha. A migration also runs the packaging check in [ModuleMigration](../../workflows/ModuleMigration.md) step 7.
 
 ## 7. Report
 

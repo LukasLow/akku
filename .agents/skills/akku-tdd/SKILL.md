@@ -26,12 +26,14 @@ A **seam** is the public boundary a test observes: `akku::<module>::…` items a
 - Reads like a spec: `rejects_nesting_beyond_max_depth`, `round_trips_strings_with_single_quotes`.
 - Expected values come from an independent source: an RFC example, a reference implementation's output, a hand-worked literal.
 - Asserts the specific outcome (`Err(Error::DepthLimit { .. })`, exact bytes), not "did not panic".
+- A documented panic is tested with `#[should_panic(expected = "<module-specific message>")]`, never a bare `#[should_panic]` that any panic satisfies.
 
 ## Anti-patterns
 
 - **Tautological:** the expected value is computed the way the code computes it, so the test passes by construction.
 - **Implementation-coupled:** reaches into private state or breaks on a refactor that keeps behaviour.
 - **Horizontal slicing:** all tests first, then all code. Work in vertical slices instead: one test → minimal code → next.
+- **Indistinguishable inputs:** the input looks identical in both letter cases or encodings, so a wrong variant passes (e.g. testing an uppercase hex encoder only on `"hi"` → `"6869"`, which has no letters).
 
 ## Adversarial set (every module)
 

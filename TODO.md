@@ -1,6 +1,6 @@
 # TODO.md — akku
 
-> **Current Snapshot:** **37 implemented modules** (+ `akku::diff` re-export = **38 / 77** entries from [`Namespace.md`](Namespace.md), **~84,400 LOC** pure Rust, `#![forbid(unsafe_code)]`, `#![deny(missing_docs)]`).
+> **Current Snapshot:** **37 implemented modules** (+ `akku::diff` re-export = **38 / 87** entries from [`Namespace.md`](Namespace.md), **~84,400 LOC** pure Rust, `#![forbid(unsafe_code)]`, `#![deny(missing_docs)]`).
 >
 > - **Wave 1:** 25 / 25 implemented (24 native zero-dep + `http` adapter)
 > - **Wave 2:** 11 / 17 implemented (`ws`, `sse`, `template`, `markdown`, `xml`, `yaml`, `text`+`diff`, `regex`, `archive`, `kv`, `cache`) — **Audit Bugfix Pass ✅ done (2026-11-24)**
@@ -27,24 +27,28 @@
 - [x] `.agents/workflows/` — at least: **new-lib intake** (human says "open a PR: add X because Y" → proposal PR → Worker/Checker PRs), bugfix, audit, commit/PR, release, module migration. (`NewLib` G1–G6, `BugFix`, `Audit`, `PullRequest`, `Release`, `ModuleMigration`.)
 - [x] Rewrite the Commit Workflow for PR-only (Checker commits on a branch and opens or updates the PR; nothing lands on `main` directly). (`.agents/workflows/PullRequest.md`.)
 - [ ] AGENTS.md = everything maintainers/agents need, with details linked into `.agents/`. README = everything newcomers need. (AGENTS.md part done; README part → 0.5 README rewrite.)
-- [ ] Translate German docs to English: `CONCEPT.md`, `Namespace.md`, and the remaining sections of `docs/`. (Resolved: the handshake token is English, `hello Worker I am Orcha`; AGENTS.md and `.agents/` use it.)
+- [x] (PR #7) Translate German docs to English: `CONCEPT.md`, `Namespace.md`, and the remaining sections of `docs/`. The handshake token is English, `hello Worker I am Orcha`; AGENTS.md and `.agents/` use it.
 
 ### 0.4 Policies
-- [ ] **unsafe policy:** allowed **only** where unavoidable (FFI, OS syscalls/sockets, platform APIs), never for convenience or speed. Mechanics: crate-level `#![deny(unsafe_code)]`, `#[allow(unsafe_code)]` only in designated `sys` submodules, every block has a `// SAFETY:` comment (`clippy::undocumented_unsafe_blocks`), CI enforces an allowlist of files. AGENTS.md and the skills updated (PR #5); remaining: CONCEPT.md (with the translation) and the CI mechanics (0.6).
-- [ ] Namespace: flat-first stays; dissolve the planned `net` family → flat `net` (std::net superset), `dns`, `quic`; add `xdr`, `vfs`, `nfs` (`nfs::server`/`client`; ONC-RPC internal for now).
+- [x] **unsafe policy:** allowed **only** where unavoidable (FFI, OS syscalls/sockets, platform APIs), never for convenience or speed. Mechanics: crate-level `#![deny(unsafe_code)]`, `#[allow(unsafe_code)]` only in designated `sys` submodules, every block has a `// SAFETY:` comment (`clippy::undocumented_unsafe_blocks`), CI enforces an allowlist of files. AGENTS.md and the skills (PR #5), CONCEPT.md (PR #7), CI allowlist `check-unsafe.sh` (PR #8).
+- [x] (PR #7) Namespace: flat-first stays; dissolve the planned `net` family → flat `net` (std::net superset), `dns`, `quic`; add `xdr`, `vfs`, `nfs` (`nfs::server`/`client`; ONC-RPC internal for now).
 - [ ] Only the 3 crates on crates.io (`akku`, `akku-drive`, `akku-cli`); everything else stays inside `akku`.
 
 ### 0.5 Docs structure
 - [ ] `capabilities.md` — one `#### <Capability>` entry per capability with a short text and its path (e.g. `#### TCP` → `akku::net`).
 - [ ] Per-module docs live in the module folder (notes, decisions, test strategy, audit log), following the mojoakku pattern; only cross-cutting docs live in `docs/`.
-- [ ] `docs/go-stdlib-gap.md` — every Go stdlib package marked as "in Rust std" / "in akku" / "missing → wave X"; missing items go into the ROADMAP.
+- [x] (PR #10) `docs/go-stdlib-gap.md` — every Go stdlib package marked as "in Rust std" / "in akku" / "missing → wave X"; missing items go into the ROADMAP.
 - [ ] README rewrite (English) and GitHub Pages site using `~/home/repos/designspace`.
 
 ### 0.6 CI (`.github/`)
-- [ ] Gates on every PR: fmt, clippy `-D warnings`, tests (all features and no default features), rustdoc `-Dwarnings`, `catalog check`, unsafe allowlist, wasm32 check (`--no-default-features`).
-- [ ] **Release guard:** fail any release/version bump outside `0.0.x` (stay on `0.0.x` until at least 2027-Q2). Note: `.changie.yaml` has `Added/Changed/…: auto: minor`, so `changie batch auto` would produce `0.1.0`; change it to `patch` or forbid `auto`.
-- [ ] macOS / Linux / Windows runners (needed for the OS layer).
-- [ ] Changelog check: require a fragment *added by this PR* (today `check-changes.sh` passes if any fragment exists); create the `release` label if Release.md should use one.
+- [x] (PR #8) Gates on every PR: fmt, clippy `-D warnings`, tests (all features and no default features), rustdoc `-Dwarnings`, `catalog check`, unsafe allowlist, wasm32 check (`--no-default-features`). The `wasm32` job is optional until green (see below).
+- [x] (PR #8) **Release guard:** fail any release/version bump outside `0.0.x` (stay on `0.0.x` until at least 2027-Q2); `.changie.yaml` kinds now use `auto: patch`.
+- [x] (PR #8) macOS / Linux / Windows runners (needed for the OS layer): `os-test` on `macos-latest` and `windows-latest`, optional until green.
+- [x] (PR #8) Changelog check: require a fragment *added by this PR* (`check-changes.sh` diffs against the PR base; `skip-changelog` label skips it). Release.md uses no `release` label, so none is created.
+- [ ] Make the optional jobs required once green: `wasm32`, `os-test (macos-latest)`, `os-test (windows-latest)` (branch protection requires only `test` today).
+- [ ] Windows portability (in progress): get `os-test (windows-latest)` green.
+- [ ] `ci.yml`: add `types: [opened, synchronize, reopened, labeled, unlabeled]` to `pull_request`, so adding `skip-changelog` re-runs the changelog check.
+- [ ] MSRV: `rust-toolchain.toml` says `channel = "stable"`, so smd and CI use the latest stable, not Rust 1.85. Decide: add an MSRV 1.85 CI job, or pin the toolchain.
 
 ### 0.7 OS layer (design first, as an RFC PR)
 - [ ] RFC: platform modules `akku::os::{unix, linux, macos, ios, android, windows}` (superset of `std::os`, cfg-gated); unified APIs stay flat domain modules (`clipboard`, `notify`, `secret`, `power`, …; media capture via `audio::device` / `vid::device`); errors `Unsupported` / `NotAvailable` / `PermissionDenied`; a per-platform support matrix in `meta.toml` → catalog/capabilities.
@@ -52,12 +56,21 @@
 - [ ] First slice driven by megaghost: `os::macos` + `secret` (Keychain), if the RFC is accepted.
 
 ### 0.8 Quality migration of existing modules
-- [ ] Pilot: bring one small module fully to the new standard as the golden example.
+- [x] (PR #9) Pilot: bring one small module fully to the new standard as the golden example. `hex` is the golden example.
 - [ ] Fan-out scan with cheaper models (Haiku/Sonnet) over all modules → gap report per module.
 - [ ] Migration PRs batch-wise until all modules are on the same level.
 
 ### 0.9 megaghost-driven libs (after 0.2–0.4)
 - [ ] `net` and `xdr` (parallel) → `vfs` → `nfs::server` (read-only first).
+
+### 0.10 Shipped-module gaps (from the Go stdlib gap doc, PR #10)
+> Shipped modules that miss an API their docs, Namespace, or Go equivalent imply. Each is a BugFix or a small NewLib-style extension of the existing module.
+- [ ] `process` — signal handling (Go `os/signal`); Namespace.md lists signals under `process`.
+- [ ] `http` — cookies (server-boundary item; client cookie jar in `http::client`; Go `net/http/cookiejar`).
+- [ ] `html` — public `unescape` (entity decoding; Go `html.UnescapeString`).
+- [ ] CRC-32C (Castagnoli) — `archive::checksum` has CRC-32 (IEEE) only (Go `hash/crc32`); decide on a flat `checksum` module first.
+- [ ] `time` — IANA time zones with DST (Go `time`, `time/tzdata`); only fixed UTC offsets today.
+- [ ] `bytes` — LEB128/zigzag varints (Go `encoding/binary` `Uvarint`/`Varint`); the `meta.toml` overclaim is removed.
 
 ---
 
@@ -113,7 +126,7 @@ All findings below were verified line-by-line during read-only cross-audits. Fix
 - [ ] `text/diff.rs:~419-424` — `apply_patch` silently skips `+`/`-`/space lines outside a hunk (and multi-file patches); return an error.
 - [ ] `text/normalize.rs:~44-49` — `normalize(.., Nfc)` builds NFC twice for non-NFC input; use one pass / quick check.
 - [ ] `yaml` — In debug builds the default `max_depth=128` uses ~1.5 MiB of stack (fine on 2 MiB threads, but tight); reduce per-level stack frames.
-- [ ] CI: add a wasm32 job — `nix shell .# -c cargo check -p akku --no-default-features --target wasm32-unknown-unknown` (green locally; the `smd` container has no wasm32 target, see `flake.nix`). With default features (`http`/tokio/mio), wasm32 does not build.
+- [x] (PR #8) CI: add a wasm32 job — `cargo check -p akku --no-default-features --target wasm32-unknown-unknown` (job `wasm32` in `ci.yml`, optional until green; locally via `nix shell .#`, the `smd` container has no wasm32 target). With default features (`http`/tokio/mio), wasm32 does not build.
 
 ---
 
@@ -121,7 +134,7 @@ All findings below were verified line-by-line during read-only cross-audits. Fix
 
 > Note: Check [`AGENTS.md`](AGENTS.md) rules #7–#8 before starting `crypto` or `tls` (never blindly roll custom crypto; use audited MPL-2.0-compatible forks or pinned optional adapters).
 
-- [ ] `net` — `ip`, `socket`, `tcp`, `udp`, `uds`, `dns`, `quic`
+- [ ] `net`, `dns`, `quic` — flat modules: `net` (`std::net` superset: IP, TCP/UDP/Unix sockets, async), `dns`, `quic` (see 0.9 for megaghost order)
 - [ ] `task`, `sync`, `schedule` — async tasks, channels, semaphore, cron/retry/backoff (+ `wasm32` spawn)
 - [ ] `crypto` — `hash`, `rand`, `aead`, `sign`, `kem`, `kdf` (audited only)
 - [ ] `tls` — TLS config, streams, certificates (`#[doc(alias = "ssl")]`; never `akku::ssl`)

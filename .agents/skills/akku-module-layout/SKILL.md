@@ -35,7 +35,7 @@ crates/akku/src/<module>/            # or src/<family>/<module>/ for a dynamic f
    name = "<module>"
    path = "src/<module>/tests.rs"
    ```
-3. Orcha runs `smd cargo run -p akku-cli -- catalog gen` (catalog check fails while `lib.rs` and `meta.toml` disagree).
+3. Orcha runs `smd cargo run -p akku-cli -- catalog gen` (catalog check fails while `lib.rs` and `meta.toml` disagree). A Worker who changes only an existing module's `meta.toml` runs `catalog gen` itself and includes the generated files.
 
 ## `meta.toml`
 
@@ -51,6 +51,8 @@ owners = ["LukasLow"]
 tags = ["<module>", "<domain>", "<category>"]
 ```
 
+The first tag should be the module name (soft rule; [ModuleMigration](../../workflows/ModuleMigration.md) fixes it).
+
 ## Two readers, two places
 
 | Reader | Lives in | Contains |
@@ -59,7 +61,7 @@ tags = ["<module>", "<domain>", "<category>"]
 | Maintainer | `_dev/` | why it is built this way, prior art, rejected options, open questions, audit history |
 | Person editing a line | `//` comment beside the code | only a non-obvious decision; the code shows the *how* |
 
-Rustdoc carries no rationale, status bookkeeping, or prior-art citations; those go to `_dev/DESIGN.md`.
+Rustdoc carries no rationale, status bookkeeping, or prior-art citations; those go to `_dev/DESIGN.md`. A consequence the user must know (not constant-time, partial writes on error, a panic) is stated in rustdoc; why it is so goes in DESIGN.md.
 
 ## `_dev/DESIGN.md`
 
@@ -80,6 +82,11 @@ Rustdoc carries no rationale, status bookkeeping, or prior-art citations; those 
 
 Update it when the API changes; it is kept for the life of the module.
 
+§References rules:
+- Pin every external source to a full 40-character commit SHA plus `path:line` (`golang/go@<sha>`, `src/encoding/hex/hex.go:39`).
+- A line range must contain the cited text; re-check it against the pinned file.
+- Fetch fallback when no clone is at hand: `gh api repos/<o>/<r>/contents/<path>?ref=<sha> -H "Accept: application/vnd.github.raw"`.
+
 ## `_dev/TODO.md`
 
 Live backlog. One line per candidate; delete a line when it ships (git is the history). An empty list is the expected end state.
@@ -94,6 +101,10 @@ Live backlog. One line per candidate; delete a line when it ships (git is the hi
 ## `_dev/AUDIT.md`
 
 Append-only log, newest first.
+
+- Each entry names the audited SHA; its line numbers refer to that SHA (mark later positions "now `:N`").
+- False-positive and won't-fix rows use `—` as severity.
+- Every cross-reference to a DESIGN.md section names a section that exists.
 
 ```markdown
 # <module> — audit log
