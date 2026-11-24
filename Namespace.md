@@ -1,213 +1,246 @@
-# Akku Namespace
+# akku Namespace
 
-Dieses Dokument ist die **Namensverfassung** von Akku. Es regelt, wie öffentliche
-Pfade heißen, wann Familien entstehen und welche Namenskollisionen verboten sind.
+This document is akku's **naming constitution**. It defines how public paths are
+named, when families form, and which name collisions are forbidden. Read it
+before adding any public name ([AGENTS.md](AGENTS.md) rule 4).
 
-## Grundregeln
+## Core rules
 
-1. **Eine Library-Crate:** Alle öffentlichen Module leben unter `akku::*`. Es gibt
-   keine 20 oder 300 Einzel-Crates — nur `akku`, das technisch erzwungene
-   Proc-Macro-Crate `akku-drive` (von `akku` re-exportiert) und das optionale
-   Binary `akku-cli`.
-2. **Kein globales Symbol-Sammelbecken:** Es gibt kein `akku::get`,
-   `akku::Request`, `akku::Server` oder `akku::Value`. Jeder öffentliche Typ und
-   jedes Makro lebt in seinem Modul (`akku::http::get`, `akku::json::Value`).
-3. **Alles flach als Default:** Jede eigenständige Library startet direkt auf
-   Ebene 1 (`akku::<name>`). Keine künstliche Taxonomie wie `akku::web::http`
-   oder `akku::encoding::json`.
-4. **Dynamische Familien:** Wenn mehrere eng zusammengehörige Module organisch
-   wachsen, dürfen sie in eine Familie gebündelt werden:
-   - vor `1.0` direkt,
-   - ab `1.0` über `#[deprecated] pub use familie::modul;` Übergangs-Aliase bis
-     zur nächsten Major-Version.
-5. **Kurze, prägnante Namen:** Kurze kanonische Namen werden bevorzugt (`ws`,
-   `sse`, `pic`, `vid`, `phy`, `cli`, `fs`, `kv`, `db`-Einzelmodule `sql`/`kv`,
-   `url`, `tls`).
-6. **Keine Rust-Keywords und kein Shadowing:** Reservierte Schlüsselwörter sind
-   als Modulnamen verboten (`async`, `gen`, `try`, `box`, `mod`, `type`, `move`,
-   `ref`, `impl`). Statt `akku::async` heißt das Modul `akku::task`. `akku::core`
-   wird vermieden, um `::core` nicht zu überschatten.
-7. **Discovery über Tags, nicht über tiefe Bäume:** Querschnitts-Zuordnungen
-   (`#web`, `#cli`, `#wasm32`, `#native-0dep`, `#adapter`, `#fork`, `#maintainer`)
-   werden in Modul-Metadaten (`meta.toml`) gepflegt und im Katalog (z. B. GitHub
-   Pages) sortiert.
+1. **One library crate:** all public modules live under `akku::*`. Exactly three
+   crates are published: `akku`, the proc-macro crate `akku-drive` (required by
+   Rust, re-exported by `akku`), and the optional binary `akku-cli`. Everything
+   else, including platform code, stays inside `akku`.
+2. **No global symbol pool:** `akku::get`, `akku::Request`, `akku::Server`, and
+   `akku::Value` do not exist. Every public type and macro lives in its module
+   (`akku::http::get`, `akku::json::Value`).
+3. **Flat by default:** every standalone library starts directly at level 1
+   (`akku::<name>`). No artificial taxonomy such as `akku::web::http` or
+   `akku::encoding::json`.
+4. **Dynamic families:** when several closely related modules grow
+   organically, they may be bundled into a family:
+   - before `1.0` directly,
+   - from `1.0` on through `#[deprecated] pub use family::module;` transition
+     aliases until the next major version.
+5. **Short, crisp names:** short canonical names are preferred (`ws`, `sse`,
+   `pic`, `vid`, `phy`, `cli`, `fs`, `kv`, `url`, `tls`; storage as single
+   modules `sql`/`kv` rather than a `db` family).
+6. **No Rust keywords, no shadowing:** reserved keywords are never module
+   names (`async`, `gen`, `try`, `box`, `mod`, `type`, `move`, `ref`, `impl`).
+   The async module is `akku::task`, not `akku::async`. There is no
+   `akku::core`, so `::core` is never shadowed.
+7. **Discovery through tags, not deep trees:** cross-cutting assignments
+   (`#web`, `#cli`, `#wasm32`, `#native-0dep`, `#adapter`, `#fork`,
+   `#maintainer`) are kept in module metadata (`meta.toml`) and sorted in the
+   catalog (e.g. GitHub Pages).
 
 ---
 
-## Familien (gruppierte Module)
+## Families (grouped modules)
 
-Die folgenden Bereiche sind bewusst als Familien gruppiert (Ebene 1 = Familie,
-Ebene 2 = Einzelmodule):
+The following areas are deliberately grouped as families (level 1 = family,
+level 2 = individual modules):
 
-| Familie | Inhalt / Beispiele | Grund |
+| Family | Contents / examples | Reason |
 |---|---|---|
-| `akku::archive` | `gzip`, `zstd`, `zip`, `tar` | Gemeinsame Stream-/Archiv-Familie |
-| `akku::auth` | `password`, `jwt`, `oauth2`, `totp`, `webauthn`, `session`, `acl` | Authentifizierung, Identität & Zugriffskontrolle |
-| `akku::audio` | `pcm`, `wav`, `flac`, `dsp`, `midi`, `device` | Getrennt von Bild/Video (z. B. für DAWs) |
-| `akku::vid` | `frame`, `codec`, `mux`, `stream` | Getrennt von Audio/Bild |
-| `akku::pic` | `png`, `jpeg`, `webp`, `bmp`, `canvas`, `filter` | Getrennt von Audio/Video (z. B. Bildeditoren) |
-| `akku::net` | `ip`, `socket`, `tcp`, `udp`, `uds`, `dns`, `quic` | Transport- und Netzwerk-Primitive (`std::net`-Obermenge) |
-| `akku::crypto` | `hash`, `aead`, `sign`, `kem`, `kdf`, `rand` | Verhindert Kollision mit `std::hash` + klare Audit-Grenze |
-| `akku::time` | `clock`, `datetime`, `duration`, `timezone` | Zusammenhängendes Zeit- und Kalender-Modell |
-| `akku::units` | `distance`, `mass`, `time`, `temp`, `energy`, `pressure`, `speed` | Dimensionssystem (`geo` bleibt separat flach!) |
-| `akku::math` | `decimal`, `linear`, `special`, `stat` | Numerik-Familie |
-| `akku::phy` | `mechanics`, `relativity`, `quantum`, `thermo`, `cosmology` | Physik-Fachrechnungen |
-| `akku::actor` | `supervisor`, `mailbox`, `registry` | Erlang-artiges Aktorsystem (`cluster` & `broker` bleiben flach) |
-| `akku::gpu` | `compute`, `render` | GPU-Compute & Grafik (inkl. WebGPU auf `wasm32`) |
-| `akku::wasm` | `host`, `guest` | **Nur** WASM-Runtime (Host/Plugins/Guest-Helfer) |
+| `akku::archive` | `gzip`, `zstd`, `zip`, `tar` | Shared stream/archive family |
+| `akku::auth` | `password`, `jwt`, `oauth2`, `totp`, `webauthn`, `session`, `acl` | Authentication, identity, and access control |
+| `akku::audio` | `pcm`, `wav`, `flac`, `dsp`, `midi`, `device` | Separate from image/video (e.g. for DAWs) |
+| `akku::vid` | `frame`, `codec`, `mux`, `stream`, `device` | Separate from audio/image |
+| `akku::pic` | `png`, `jpeg`, `webp`, `bmp`, `canvas`, `filter` | Separate from audio/video (e.g. image editors) |
+| `akku::crypto` | `hash`, `aead`, `sign`, `kem`, `kdf`, `rand` | Avoids collision with `std::hash`; clear audit boundary |
+| `akku::time` | `clock`, `datetime`, `duration`, `timezone` | One coherent time and calendar model |
+| `akku::units` | `distance`, `mass`, `time`, `temp`, `energy`, `pressure`, `speed` | Dimension system (`geo` stays separate and flat) |
+| `akku::math` | `decimal`, `linear`, `special`, `stat` | Numerics family |
+| `akku::phy` | `mechanics`, `relativity`, `quantum`, `thermo`, `cosmology` | Physics calculations |
+| `akku::actor` | `supervisor`, `mailbox`, `registry` | Erlang-style actor system (`cluster` and `broker` stay flat) |
+| `akku::gpu` | `compute`, `render` | GPU compute and graphics (including WebGPU on `wasm32`) |
+| `akku::wasm` | `host`, `guest` | **Only** the WASM runtime (host, plugins, guest helpers) |
+| `akku::os` | `unix`, `linux`, `macos`, `ios`, `android`, `windows` | Platform modules (`std::os` superset), see [OS layer](#os-layer) |
+
+Networking is deliberately **not** a family: `net`, `dns`, and `quic` are flat
+modules (below).
 
 ---
 
-## Flache Module (Ebene 1)
+## Flat modules (level 1)
 
-Alles außerhalb der Familien oben liegt direkt unter `akku::`:
+Everything outside the families above lives directly under `akku::`.
 
-### Netz, Web & Protokolle
+### Network, transport & storage protocols
 
-| Modul | Inhalt / Regel |
+| Module | Contents / rule |
 |---|---|
-| `akku::http` | `App`/`server`, `client`, `Request`, `Response`, `Status`, `Headers`, `Cookie`, `Path`, `Result`; `http2`/`http3` sind Protokoll-Features innerhalb von `http` |
-| `akku::ws` | `server`, `client` (Native + `wasm32`), `Message`, `Frame` |
-| `akku::sse` | `server`, `client` (Native + `wasm32`), `Event`, `Stream` |
-| `akku::webpush` | WebPush-Client/Server (nicht vages `push`) |
-| `akku::url` | URL-/URI-Parsing und Query-Builder |
-| `akku::mime` | MIME-Typen und Content-Type-Erkennung |
-| `akku::tls` | TLS-Konfiguration, Streams, Zertifikate (`#[doc(alias = "ssl")]`; **kein** eigenes `akku::ssl`-Modul!) |
+| `akku::net` | `std::net` superset: IP addresses, TCP/UDP/Unix sockets, socket options, async I/O (Wave 2) |
+| `akku::dns` | DNS resolver and message encoding (Wave 2) |
+| `akku::quic` | QUIC transport (Wave 2; the base for `http3`) |
+| `akku::xdr` | XDR encoding and decoding (RFC 4506) (Wave 2, megaghost-driven) |
+| `akku::vfs` | Virtual filesystem trait layer that backends and servers plug into (Wave 2, megaghost-driven) |
+| `akku::nfs` | NFS `server` and `client` over `vfs`; ONC-RPC stays an internal detail for now (Wave 2, megaghost-driven; read-only `server` first) |
+
+### Web & protocols
+
+| Module | Contents / rule |
+|---|---|
+| `akku::http` | `App`/`server`, `client`, `Request`, `Response`, `Status`, `Headers`, `Cookie`, `Path`, `Result`; `http2`/`http3` are protocol features inside `http` |
+| `akku::ws` | `server`, `client` (native + `wasm32`), `Message`, `Frame` |
+| `akku::sse` | `server`, `client` (native + `wasm32`), `Event`, `Stream` |
+| `akku::webpush` | WebPush client/server (not a vague `push`) |
+| `akku::url` | URL/URI parsing and query builder |
+| `akku::mime` | MIME types and content-type detection |
+| `akku::tls` | TLS configuration, streams, certificates (`#[doc(alias = "ssl")]`; there is **no** `akku::ssl` module) |
 | `akku::rpc` | `server`, `client` |
-| `akku::mail` | SMTP-Client und MIME-Mail-Builder |
+| `akku::mail` | SMTP client and MIME mail builder |
 | `akku::mqtt` | `client`, `broker` |
 | `akku::ssh` | `server`, `client` |
 
-### Markup & Text
+### Markup & text
 
-| Modul | Inhalt / Regel |
+| Module | Contents / rule |
 |---|---|
-| `akku::html` | Eigenständig getrennt von `akku::http`; `Html`, `escape`, später Parser/Sanitizer |
-| `akku::xml` | XML lesen/schreiben |
+| `akku::html` | Kept separate from `akku::http`; `Html`, `escape`, later parser/sanitizer |
+| `akku::xml` | XML reading/writing |
 | `akku::markdown` | CommonMark/GFM → AST/HTML |
-| `akku::template` | Sichere Text-/HTML-Templates |
-| `akku::regex` | Reguläre Ausdrücke |
-| `akku::text` | Unicode, Grapheme, Normalisierung, String-Helfer |
-| `akku::diff` | Text-/Struktur-Diff |
-| `akku::i18n` | Lokalisierung & Übersetzungen |
+| `akku::template` | Safe text/HTML templates |
+| `akku::regex` | Regular expressions |
+| `akku::text` | Unicode, graphemes, normalization, string helpers |
+| `akku::diff` | Text/structure diff |
+| `akku::i18n` | Localization and translations |
 
-### Datenformate, Serialisierung & Codierung
+### Data formats, serialization & encoding
 
-| Modul | Inhalt / Regel |
+| Module | Contents / rule |
 |---|---|
-| `akku::json` | `Value`, `from_str`, `to_string`, typisiertes Mapping |
-| `akku::csv` | Streaming Reader/Writer, Header, typisierte Zeilen |
-| `akku::toml` | TOML lesen/schreiben |
-| `akku::yaml` | YAML lesen/schreiben |
-| `akku::ini` | INI-Dateien |
-| `akku::dotenv` | `.env`-Dateien |
-| `akku::config` | Geschichtete App-Konfiguration (Defaults → Datei → Env) |
-| `akku::protobuf` | Protocol Buffers (Runtime + Codegen via `build-dependencies`) |
-| `akku::flatbuffers` | Zero-Copy FlatBuffers |
+| `akku::json` | `Value`, `from_str`, `to_string`, typed mapping |
+| `akku::csv` | Streaming reader/writer, headers, typed rows |
+| `akku::toml` | TOML reading/writing |
+| `akku::yaml` | YAML reading/writing |
+| `akku::ini` | INI files |
+| `akku::dotenv` | `.env` files |
+| `akku::config` | Layered app configuration (defaults → file → env) |
+| `akku::protobuf` | Protocol Buffers (runtime + codegen via `build-dependencies`) |
+| `akku::flatbuffers` | Zero-copy FlatBuffers |
 | `akku::msgpack` | MessagePack |
 | `akku::cbor` | CBOR |
-| `akku::base64` | Base64 & Base64URL |
-| `akku::hex` | Hex-Encoding/Decoding |
+| `akku::base64` | Base64 and Base64URL |
+| `akku::hex` | Hex encoding/decoding |
 
-### Datenbanken, Storage & Daten
+### Databases, storage & data
 
-| Modul | Inhalt / Regel |
+| Module | Contents / rule |
 |---|---|
-| `akku::sql` | Einheitliche SQL-API, Pool, `migrate`, Treiber (`sql::sqlite`, `sql::postgres` — keine Produktnamen auf Ebene 1!) |
-| `akku::kv` | Key-Value-Store-API (embedded + z. B. `kv::redis`) |
-| `akku::cache` | In-Memory LRU-/TTL-Cache |
-| `akku::dataframe` | Spaltenorientierte Tabellen-Verarbeitung |
+| `akku::sql` | Unified SQL API, pool, `migrate`, drivers (`sql::sqlite`, `sql::postgres`; no product names at level 1) |
+| `akku::kv` | Key-value store API (embedded + e.g. `kv::redis`) |
+| `akku::cache` | In-memory LRU/TTL cache |
+| `akku::dataframe` | Column-oriented table processing |
 
-### Async, System, CLI & Entwicklung
+### Async, system, CLI & development
 
-| Modul | Inhalt / Regel |
+| Module | Contents / rule |
 |---|---|
-| `akku::task` | Async-Tasks, Runtime, Timeout, Cancellation (nicht `async`!) |
-| `akku::sync` | Async-/Sync-Channels, Semaphore, Broadcast, Watch (`std::sync`-Obermenge) |
-| `akku::schedule` | Intervalle, Cron, Retry/Backoff |
-| `akku::cluster` | Knoten-Mitgliedschaft, Gossip, Discovery |
-| `akku::broker` | Pub/Sub-Message-Broker |
-| `akku::fs` | `std::fs`-Obermenge + `walk`, `glob`, `tempfile`, `watch`, atomisches Schreiben |
-| `akku::cli` | Argument-Parser, Subcommands, Auto-Help |
-| `akku::term` | ANSI-Farben, Tabellen, Progress-Bars, Prompts |
-| `akku::tui` | Terminal-UI-Komponenten |
-| `akku::process` | `std::process`-Obermenge + Pipes, Signale |
-| `akku::env` | `std::env`-Obermenge + typisierte Vars, OS-Standardpfade |
-| `akku::log` | Strukturiertes Logging (Human + JSON) |
-| `akku::trace` | Spans, Tracing, Metriken |
-| `akku::test` | HTTP-Testclient, Tempdir, Snapshots |
-| `akku::bench` | Mikro-Benchmarks |
-| `akku::error` | Einheitliches `Error`/`Result` mit Kontext & Error-Chain |
-| `akku::bytes` | Byte-Buffer, Endian, Bit-Operationen |
+| `akku::task` | Async tasks, runtime, timeout, cancellation (not `async`) |
+| `akku::sync` | Async/sync channels, semaphore, broadcast, watch (`std::sync` superset) |
+| `akku::schedule` | Intervals, cron, retry/backoff |
+| `akku::cluster` | Node membership, gossip, discovery |
+| `akku::broker` | Pub/sub message broker |
+| `akku::fs` | `std::fs` superset + `walk`, `glob`, `tempfile`, `watch`, atomic writes |
+| `akku::cli` | Argument parser, subcommands, auto help |
+| `akku::term` | ANSI colors, tables, progress bars, prompts |
+| `akku::tui` | Terminal UI components |
+| `akku::process` | `std::process` superset + pipes, signals |
+| `akku::env` | `std::env` superset + typed vars, OS standard paths |
+| `akku::log` | Structured logging (human + JSON) |
+| `akku::trace` | Spans, tracing, metrics |
+| `akku::test` | HTTP test client, tempdir, snapshots |
+| `akku::bench` | Micro-benchmarks |
+| `akku::error` | Unified `Error`/`Result` with context and error chain |
+| `akku::bytes` | Byte buffers, endianness, bit operations |
 | `akku::id` | UUID (v4/v7), ULID, NanoID |
 
-### Wissenschaft, Medien-Helfer & UI
+### Unified OS APIs
 
-| Modul | Inhalt / Regel |
+Cross-platform APIs over the [OS layer](#os-layer); each is a flat module.
+
+| Module | Contents / rule |
 |---|---|
-| `akku::algo` | Graphen, Pathfinding, Sort-/Search-Algorithmen |
-| `akku::geo` | Geokoordinaten, Distanzen, Projektionen (getrennt von `units`) |
-| `akku::chem` | Chemie-Domäne (kann bei Wachstum zur Familie werden) |
-| `akku::bio` | Biologie-Domäne (kann bei Wachstum zur Familie werden) |
-| `akku::econ` | Ökonomie-/Finanz-Domäne (kann bei Wachstum zur Familie werden) |
-| `akku::color` | RGB, HSL, OKLCH, Hex, Kontrast |
-| `akku::pdf` | PDF erzeugen/lesen |
-| `akku::ui` | UI-Komponenten (Native + `wasm32`) |
-| `akku::webview` | System-WebView-Anwendungen |
+| `akku::clipboard` | System clipboard |
+| `akku::notify` | Desktop/system notifications |
+| `akku::secret` | OS secret stores (Keychain, Credential Manager, Secret Service) |
+| `akku::power` | Battery, power state, sleep inhibition |
+
+Media capture is not a separate module: it lives in `audio::device` and
+`vid::device`.
+
+### Science, media helpers & UI
+
+| Module | Contents / rule |
+|---|---|
+| `akku::algo` | Graphs, pathfinding, sort/search algorithms |
+| `akku::geo` | Geo coordinates, distances, projections (separate from `units`) |
+| `akku::chem` | Chemistry domain (may become a family as it grows) |
+| `akku::bio` | Biology domain (may become a family as it grows) |
+| `akku::econ` | Economics/finance domain (may become a family as it grows) |
+| `akku::color` | RGB, HSL, OKLCH, hex, contrast |
+| `akku::pdf` | PDF generation/reading |
+| `akku::ui` | UI components (native + `wasm32`) |
+| `akku::webview` | System WebView applications |
 
 ---
 
-## Querschnitts-Konventionen
+## Cross-cutting conventions
 
-### 1. `server` und `client` leben *innen*
+### 1. `server` and `client` live *inside*
 
-Protokoll-Module mit Server- und Client-Rolle nutzen immer dieselbe Innenstruktur:
+Protocol modules with server and client roles always use the same inner
+structure:
 
 ```rust
-akku::http::server   // bzw. akku::http::App
-akku::http::client   // Native + wasm32 (fetch)
+akku::http::server   // or akku::http::App
+akku::http::client   // native + wasm32 (fetch)
 
 akku::ws::server
-akku::ws::client     // Native + wasm32 (WebSocket)
+akku::ws::client     // native + wasm32 (WebSocket)
 
 akku::sse::server
-akku::sse::client    // Native + wasm32 (EventSource)
+akku::sse::client    // native + wasm32 (EventSource)
+
+akku::nfs::server
+akku::nfs::client
 ```
 
-Gemeinsame Typen (`Request`, `Response`, `Message`, `Event`, `Status`) liegen
-direkt am Protokoll-Modul (`akku::http::Request`, `akku::ws::Message`).
+Shared types (`Request`, `Response`, `Message`, `Event`, `Status`) live directly
+on the protocol module (`akku::http::Request`, `akku::ws::Message`).
 
-### 2. `wasm32`-Target vs. `akku::wasm`
+### 2. `wasm32` target vs. `akku::wasm`
 
-- **Kein `forwasm::`-Modul.** Client- und reine Daten-Module unterstützen
-  `wasm32` transparent hinter derselben API via `#[cfg(target_arch = "wasm32")]`.
-- **`akku::wasm`** ist ausschließlich die WASM-Runtime (`wasm::host`, `wasm::guest`).
+- **No `forwasm::` module.** Client and pure data modules support `wasm32`
+  transparently behind the same API via `#[cfg(target_arch = "wasm32")]`.
+- **`akku::wasm`** is exclusively the WASM runtime (`wasm::host`, `wasm::guest`).
 
-### 3. `std`-Namens-Obermengen
+### 3. `std` name supersets
 
-Module, die denselben Namen tragen wie ein `std`-Modul (`fs`, `net`, `sync`,
-`time`, `env`, `process`), sind als **Obermenge** gedacht, sodass `use akku::fs`
-ergonomisch neben oder statt `std::fs` genutzt werden kann.
+Modules named like a `std` module (`fs`, `net`, `sync`, `time`, `env`,
+`process`, `os`) are **supersets**, so `use akku::fs` works ergonomically next
+to or instead of `std::fs`.
 
-### 4. Keine Produktnamen auf Ebene 1
+### 4. No product names at level 1
 
-Anbieter- und Produktnamen leben unter ihrer fachlichen Domäne:
-- `akku::kv::redis` (nicht `akku::redis`)
-- `akku::sql::postgres`, `akku::sql::sqlite` (nicht `akku::postgres`)
+Vendor and product names live under their domain:
 
-### 5. Reservierte generische Typnamen
+- `akku::kv::redis` (not `akku::redis`)
+- `akku::sql::postgres`, `akku::sql::sqlite` (not `akku::postgres`)
 
-Diese Typnamen tauchen niemals direkt unter `akku::` auf, sondern immer in
-ihrem Modul:
+### 5. Reserved generic type names
+
+These type names never appear directly under `akku::`, always in their module:
 
 ```text
 Server, Client, Request, Response, Error, Result, Value, Map, Set,
 List, Node, Element, Document, Route, Handler, Context, Config
 ```
 
-### 6. Makros
+### 6. Macros
 
-Makros folgen derselben Modulregel:
+Macros follow the same module rule:
 
 ```rust
 #[akku::http::get("/users/{id}")]
@@ -215,10 +248,27 @@ Makros folgen derselben Modulregel:
 #[akku::http::main]
 ```
 
-Nicht `#[akku::get]` oder `#[akku::main]`. `akku-drive` bleibt ein internes
-Implementierungsdetail; Nutzer importieren nur `akku`.
+Not `#[akku::get]` or `#[akku::main]`. `akku-drive` stays an internal
+implementation detail; users import only `akku`.
 
 ### 7. Prelude
 
-Ein optionales `akku::prelude` darf Bequemlichkeit bieten, übernimmt aber keine
-Namenshoheit. Der vollständige Modulpfad bleibt immer die kanonische Quelle.
+An optional `akku::prelude` may offer convenience but never owns names. The full
+module path is always the canonical source.
+
+---
+
+## OS layer
+
+- **Platform modules:** `akku::os::{unix, linux, macos, ios, android, windows}`
+  are a `std::os` superset, each gated with `#[cfg(target_os = …)]` (or
+  `cfg(unix)`) inside `akku`. Names follow Rust's `std::os` (`macos`, not
+  `darwin`). There are no `akku-<platform>` crates; platform-only dependencies
+  go in `[target.'cfg(…)'.dependencies]`.
+- **Unified APIs** (`clipboard`, `notify`, `secret`, `power`, …) are flat
+  domain modules built on the platform modules. On unsupported platforms they
+  return typed `Unsupported` / `NotAvailable` / `PermissionDenied` errors.
+- Platform code that needs `unsafe` keeps it in a `sys` submodule
+  ([akku-unsafe](.agents/skills/akku-unsafe/SKILL.md)).
+- The detailed design (support matrix in `meta.toml`, first slices) is an
+  RFC PR (TODO 0.7).

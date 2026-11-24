@@ -101,7 +101,7 @@ Goal: production web backends, data pipelines, and WASM-ready clients.
 - [x] `kv` (`native` / `adapter`) — embedded KV store + `kv::redis`
 - [x] `cache` (`native`) — in-memory LRU/TTL cache
 - [ ] `task` & `sync` (`adapter → native`, + `wasm32` spawn) — async tasks, channels, semaphore, `schedule`
-- [ ] `net` (`native` / `adapter`) — `ip`, `socket`, `tcp`, `udp`, `uds`, `dns`, `quic`
+- [ ] `net`, `dns`, `quic` (`native` / `adapter`) — flat modules: `net` (`std::net` superset: IP, TCP/UDP/Unix sockets, async), `dns`, `quic`
 
 ---
 
