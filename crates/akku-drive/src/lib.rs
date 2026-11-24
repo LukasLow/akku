@@ -6,6 +6,9 @@
 //! ```text
 //! #[akku::http::get("/")]
 //! #[akku::http::post("/users")]
+//! #[akku::http::put("/users/{id}")]
+//! #[akku::http::patch("/users/{id}")]
+//! #[akku::http::delete("/users/{id}")]
 //! #[akku::http::main]
 //! ```
 
@@ -40,6 +43,33 @@ pub fn get(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn post(attr: TokenStream, item: TokenStream) -> TokenStream {
     route(attr, item, "post")
+}
+
+/// Mark an async function as a `PUT` route.
+///
+/// The function becomes a generated route type with the same name, exactly like
+/// [`get`].
+#[proc_macro_attribute]
+pub fn put(attr: TokenStream, item: TokenStream) -> TokenStream {
+    route(attr, item, "put")
+}
+
+/// Mark an async function as a `PATCH` route.
+///
+/// The function becomes a generated route type with the same name, exactly like
+/// [`get`].
+#[proc_macro_attribute]
+pub fn patch(attr: TokenStream, item: TokenStream) -> TokenStream {
+    route(attr, item, "patch")
+}
+
+/// Mark an async function as a `DELETE` route.
+///
+/// The function becomes a generated route type with the same name, exactly like
+/// [`get`].
+#[proc_macro_attribute]
+pub fn delete(attr: TokenStream, item: TokenStream) -> TokenStream {
+    route(attr, item, "delete")
 }
 
 /// Run an async `main` function on Akku's Tokio runtime.

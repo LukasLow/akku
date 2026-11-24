@@ -1,0 +1,9 @@
+name = "http"
+status = "adapter"
+wasm32 = false
+feature = "http"
+wave = 1
+summary = "HTTP server routing (backed by axum/tokio) and zero-dependency blocking HTTP/1.1 client."
+owners = ["LukasLow"]
+tags = ["http", "web", "server", "client"]
+source = "https://github.com/tokio-rs/axum"
