@@ -14,12 +14,12 @@
 
 ### 0.1 Alignment
 - [ ] Purpose statement ("Why akku?") confirmed by the human → becomes the README intro (English).
-- [ ] OS layer design approved (see 0.7).
-- [ ] Decide: who merges PRs (human only vs. agents after green CI + Checker approval).
+- [x] OS layer design approved (see 0.7): Rust `std::os` names (`macos`, not `darwin`); unified APIs as flat modules (no `unios`). Open: platform code in internal crates `akku-<platform>`? (see 0.7).
+- [x] Decided: **agents merge** PRs once CI is green and a Checker approved.
 
 ### 0.2 Land the current state (PR-only from now on)
-- [ ] Create a feature branch and land the uncommitted work (37 modules, Wave-2 bugfix pass, `flake.nix`, AGENTS commit workflow) through PRs via the Commit Workflow (one commit per module/batch).
-- [ ] Protect `main`: no direct pushes, PR + green CI required (needs human OK before changing GitHub settings).
+- [ ] (PR #3 open: https://github.com/LukasLow/akku/pull/3) Create a feature branch and land the uncommitted work (37 modules, Wave-2 bugfix pass, `flake.nix`, AGENTS commit workflow) through PRs via the Commit Workflow (one commit per module/batch).
+- [x] `main` protected (2026-11-24): PR required (0 approvals so agents can merge), required check `test`, enforced for admins, no force-push/deletion. The release workflow only reacts to merges and creates tags via API, so it is unaffected.
 
 ### 0.3 Governance system (`.agents/`)
 - [ ] Study `~/home/repos/mojoakku` (skills, workflows, per-lib docs) and Matt Pocock's public skills; adopt what fits.
@@ -42,7 +42,7 @@
 
 ### 0.6 CI (`.github/`)
 - [ ] Gates on every PR: fmt, clippy `-D warnings`, tests (all features and no default features), rustdoc `-Dwarnings`, `catalog check`, unsafe allowlist, wasm32 check (`--no-default-features`).
-- [ ] **Release guard:** fail any release/version bump outside `0.0.x` (stay on `0.0.x` until at least 2027-Q2).
+- [ ] **Release guard:** fail any release/version bump outside `0.0.x` (stay on `0.0.x` until at least 2027-Q2). Note: `.changie.yaml` has `Added/Changed/…: auto: minor`, so `changie batch auto` would produce `0.1.0`; change it to `patch` or forbid `auto`.
 - [ ] macOS / Linux / Windows runners (needed for the OS layer).
 
 ### 0.7 OS layer (design first, as an RFC PR)
