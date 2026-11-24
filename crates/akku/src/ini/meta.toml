@@ -1,0 +1,7 @@
+name = "ini"
+status = "native"
+wasm32 = true
+wave = 1
+summary = "Zero-dependency INI configuration parser and writer with sections, escapes, and order preservation."
+owners = ["LukasLow"]
+tags = ["ini", "config", "format"]
