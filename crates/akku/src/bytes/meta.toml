@@ -1,0 +1,7 @@
+name = "bytes"
+status = "native"
+wasm32 = true
+wave = 1
+summary = "Shared immutable byte buffers, growable byte builders, cursor readers, and LEB128/zigzag varints."
+owners = ["LukasLow"]
+tags = ["bytes", "buffers", "binary", "varint"]
