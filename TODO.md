@@ -45,9 +45,9 @@
 - [x] (PR #8) **Release guard:** fail any release/version bump outside `0.0.x` (stay on `0.0.x` until at least 2027-Q2); `.changie.yaml` kinds now use `auto: patch`.
 - [x] (PR #8) macOS / Linux / Windows runners (needed for the OS layer): `os-test` on `macos-latest` and `windows-latest`, optional until green.
 - [x] (PR #8) Changelog check: require a fragment *added by this PR* (`check-changes.sh` diffs against the PR base; `skip-changelog` label skips it). Release.md uses no `release` label, so none is created.
-- [ ] Make the optional jobs required once green: `wasm32`, `os-test (macos-latest)`, `os-test (windows-latest)` (branch protection requires only `test` today).
+- [x] macOS + Windows required (2026-11-24); `wasm32` optional by design (branch protection requires `test`, `os-test (macos-latest)`, `os-test (windows-latest)`).
 - [ ] Windows portability (in progress): get `os-test (windows-latest)` green.
-- [ ] `ci.yml`: add `types: [opened, synchronize, reopened, labeled, unlabeled]` to `pull_request`, so adding `skip-changelog` re-runs the changelog check.
+- [x] `ci.yml`: add `types: [opened, synchronize, reopened, labeled, unlabeled]` to `pull_request`, so adding `skip-changelog` re-runs the changelog check.
 - [ ] MSRV: `rust-toolchain.toml` says `channel = "stable"`, so smd and CI use the latest stable, not Rust 1.85. Decide: add an MSRV 1.85 CI job, or pin the toolchain.
 
 ### 0.7 OS layer (design first, as an RFC PR)
