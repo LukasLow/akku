@@ -1,0 +1,7 @@
+name = "cli"
+status = "native"
+wasm32 = false
+wave = 1
+summary = "Zero-dependency command-line argument parser with subcommands, flags, env fallbacks, and help rendering."
+owners = ["LukasLow"]
+tags = ["cli", "args", "parsing"]
