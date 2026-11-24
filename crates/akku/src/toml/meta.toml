@@ -1,0 +1,7 @@
+name = "toml"
+status = "native"
+wasm32 = true
+wave = 1
+summary = "Zero-dependency TOML 1.0 parser, value model, dotted paths, and deterministic serializer."
+owners = ["LukasLow"]
+tags = ["toml", "format", "config"]
