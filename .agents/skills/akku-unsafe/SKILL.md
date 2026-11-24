@@ -14,7 +14,7 @@ description: akku's unsafe policy and mechanics. Use when code seems to need `un
 1. Crate level: `#![deny(unsafe_code)]` replaces `#![forbid(unsafe_code)]`, in its own PR with Checker review and explicit human approval.
 2. `#[allow(unsafe_code)]` appears only on a designated `sys` submodule: `crates/akku/src/<module>/sys/` (or `src/os/<platform>/sys/`). Everything outside `sys` stays safe and calls `sys` through a safe wrapper.
 3. Every `unsafe` block and `unsafe fn` carries a `// SAFETY:` comment naming the invariant and why it holds here. Enforced by `#![deny(clippy::undocumented_unsafe_blocks)]` and `#![deny(unsafe_op_in_unsafe_fn)]`.
-4. CI checks an allowlist of files that may contain `unsafe` (planned, TODO 0.6). Adding a file to it requires Checker review and human approval in the PR.
+4. CI enforces an allowlist of files that may contain `unsafe`: [`.github/unsafe-allowlist.txt`](../../../.github/unsafe-allowlist.txt), checked by `.github/scripts/check-unsafe.sh`. Adding a file to it requires Checker review and human approval in the PR.
 
 ## Writing a `sys` module
 

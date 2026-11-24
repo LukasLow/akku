@@ -37,6 +37,11 @@ jobs:
           echo "TAG=v$version" >> "$GITHUB_ENV"
           echo "release version: $version"
 
+      # Fails (does not skip) on any version outside 0.0.x; the rule lives in
+      # RELEASE_SERIES in release.py.
+      - name: Release guard (0.0.x only)
+        run: python3 .github/scripts/release.py --check
+
       - name: Skip when the tag already exists
         run: |
           if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then

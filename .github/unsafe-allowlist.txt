@@ -1,0 +1,10 @@
+# Files that may contain `unsafe` (blocks, fns, impls, traits, extern blocks,
+# unsafe attributes). Checked by .github/scripts/check-unsafe.sh in CI.
+#
+# One repo-relative path per line, e.g. crates/akku/src/net/sys/unix.rs.
+# Blank lines and lines starting with `#` are ignored.
+#
+# Policy: .agents/skills/akku-unsafe/SKILL.md. Only `sys` submodules qualify,
+# and adding a path needs Checker review and explicit human approval in the PR.
+#
+# Empty today: crates/akku/src/lib.rs is #![forbid(unsafe_code)].

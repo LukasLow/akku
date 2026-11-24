@@ -9,11 +9,14 @@ permissions:
   contents: read
 
 jobs:
+  # Required by branch protection: keep the job name `test`.
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          # Full history so check-changes.sh can diff against the PR base.
+          fetch-depth: 0
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -28,9 +31,14 @@ jobs:
       - run: cargo doc --workspace --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
-      - run: python3 .github/scripts/release.py --check
+      - name: Module catalog is up to date
+        run: cargo run --locked -p akku-cli -- catalog check
+      - name: unsafe allowlist
+        run: sh .github/scripts/check-unsafe.sh
+      - name: Release guard (0.0.x only) and release state
+        run: python3 .github/scripts/release.py --check
 
-      - name: Check changie fragment
+      - name: Check changie fragment added by this PR
         if: >-
           github.event_name == 'pull_request' &&
           github.actor != 'dependabot[bot]' &&
@@ -40,3 +48,34 @@ jobs:
           !contains(github.event.pull_request.labels.*.name, 'release') &&
           !contains(github.event.pull_request.labels.*.name, 'dependencies')
         run: sh .github/scripts/check-changes.sh
+
+  # Not required yet (branch protection requires only `test`).
+  wasm32:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p akku --no-default-features --target wasm32-unknown-unknown --locked
+
+  # Not required yet: green on these runners is not verified in CI history.
+  os-test:
+    name: os-test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Keep LF line endings (test fixtures)
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --all-features --locked

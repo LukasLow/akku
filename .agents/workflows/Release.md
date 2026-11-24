@@ -21,7 +21,7 @@ Publish the three crates `akku`, `akku-drive`, `akku-cli` to crates.io at an exp
 ## Steps
 1. **Branch:** `git switch -c release/0.0.N main`. (`release/*` branches skip the changie-fragment CI check.)
 2. **Prepare:** `nix shell .#release -c python3 .github/scripts/release.py 0.0.N` (the flake's `release` env provides `python3`, `changie`, and the pinned `cargo`, which smd lacks). It sets the workspace and internal dependency versions, runs `cargo update --workspace`, `changie batch 0.0.N`, `changie merge`, and writes `releases/v0.0.N-<date>.md`. It does not commit, tag, or publish.
-   - Always an explicit `0.0.N`. `auto`/`minor` (and `changie batch auto`) map `Added`/`Changed` to a minor bump and would produce `0.1.0`.
+   - Always an explicit `0.0.N`. The release guard (`RELEASE_SERIES` in `release.py`) refuses `auto`/`minor`/`major` and any version outside `0.0.x`; `.changie.yaml` maps every kind to `patch`.
 3. **Check:** `nix shell .#release -c python3 .github/scripts/release.py --check` reports "prepared"; `CHANGELOG.md` has `## 0.0.N - <date>`; `.changes/unreleased/` is empty; the workspace smd gate passes ([akku-smd-workflow](../skills/akku-smd-workflow/SKILL.md) §Workspace).
 4. **PR:** Orcha writes the commit request (files: `Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`, `.changes/`, `releases/`) → Checker → PR titled `chore(release): 0.0.N` on branch `release/0.0.N` → merge per [PullRequest](PullRequest.md).
 5. **Publish (automatic):** the merge changes `Cargo.toml` on `main`, which triggers `release.yml`. It skips (without error) if tag `v0.0.N` exists, crates.io already has the version, or `CHANGELOG.md` has no `## 0.0.N` section; it fails if the notes file is missing or unreleased fragments remain; then publishes `akku-drive` → `akku` → `akku-cli` via crates.io Trusted Publishing and creates the GitHub release and tag `v0.0.N`.
@@ -30,7 +30,7 @@ Publish the three crates `akku`, `akku-drive`, `akku-cli` to crates.io at an exp
 ## Rules
 - Publishing happens only through `release.yml` on a merge to `main`; agents never run `cargo publish` or create tags by hand.
 - A failed run is fixed on a new PR; re-running is safe because already-published crates are skipped.
-- A CI release guard that rejects versions outside `0.0.x` is planned (TODO 0.6).
+- Release guard: `release.py --check` fails on a workspace version outside `0.0.x`; it runs in `ci.yml` (job `test`) and in `release.yml` before publishing. Lifting it after 2027-Q2 is the one-line change `RELEASE_SERIES = None` in `release.py`.
 
 ## Artifacts
 - Release PR (version bump, `CHANGELOG.md`, `.changes/0.0.N.md`, `releases/v0.0.N-<date>.md`), tag `v0.0.N`, GitHub release, three crates on crates.io.
