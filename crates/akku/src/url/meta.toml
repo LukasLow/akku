@@ -1,0 +1,7 @@
+name = "url"
+status = "native"
+wasm32 = true
+wave = 1
+summary = "RFC 3986 URL parser, relative reference resolution, percent-encoding, and query string manipulation."
+owners = ["LukasLow"]
+tags = ["url", "uri", "rfc3986", "web"]
