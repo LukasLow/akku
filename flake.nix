@@ -17,10 +17,10 @@
       # Keep in sync with smd.v0.6.toml (Rust 1.85, edition 2021).
       toolchain = pkgs: pkgs.rust-bin.stable."1.85.0".minimal.override {
         extensions = [ "clippy" ];
-        targets = [ "wasm32-unknown-unknown" ];
+        targets = [ "wasm32-unknown-unknown" "x86_64-pc-windows-gnu" ];
       };
       # The darwin linker needs libiconv for some std/all-features builds.
-      platformLibs = pkgs: pkgs.lib.optionals pkgs.stdenv.isDarwin [ pkgs.libiconv ];
+      platformLibs = pkgs: pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ pkgs.libiconv ];
       # `nix shell .#release -c python3 .github/scripts/release.py 0.0.N`
       # release.py needs python3, changie, and cargo (for `cargo update`).
       releaseTools = pkgs: [ (toolchain pkgs) pkgs.python3 pkgs.changie ] ++ platformLibs pkgs;

@@ -10,6 +10,8 @@
 //!
 //! ```
 //! use akku::process::{Cmd, Pipeline};
+//! # // These examples use Unix tools (`echo`, `tr`, `sort`, `printf`).
+//! # #[cfg(unix)] {
 //!
 //! let out = Cmd::new("echo").arg("hello from akku").run().unwrap();
 //! assert!(out.success());
@@ -22,6 +24,7 @@
 //!     .run()
 //!     .unwrap();
 //! assert_eq!(piped.stdout, b"a\nb\nc\n");
+//! # }
 //! ```
 
 pub(crate) mod cmd;

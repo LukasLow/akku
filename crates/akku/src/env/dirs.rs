@@ -26,9 +26,10 @@ use std::path::PathBuf;
 /// ```
 /// use std::path::PathBuf;
 ///
+/// let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
 /// assert_eq!(
 ///     akku::env::home_dir(),
-///     std::env::var_os("HOME").map(PathBuf::from)
+///     std::env::var_os(var).map(PathBuf::from)
 /// );
 /// assert!(akku::env::home_dir().is_some());
 /// ```

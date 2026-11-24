@@ -236,11 +236,21 @@ fn env_and_default_value_sources_and_help_version_handling() {
     let spec_err = bad_spec.parse_from_with_env(["bad"], |_| None).unwrap_err();
     assert_eq!(spec_err.kind(), ErrorKind::InvalidSpec);
 
-    // Non-UTF-8 check (on Unix platforms).
+    // Non-UTF-8 arguments are rejected (Unix: raw bytes).
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStringExt;
         let bad_os = OsString::from_vec(vec![0xff, 0xfe]);
+        let err = cmd
+            .parse_from_with_env([OsString::from("srv"), bad_os], |_| None)
+            .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidUtf8);
+    }
+    // Windows: an unpaired UTF-16 surrogate has no UTF-8 form.
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStringExt;
+        let bad_os = OsString::from_wide(&[0xD800]);
         let err = cmd
             .parse_from_with_env([OsString::from("srv"), bad_os], |_| None)
             .unwrap_err();

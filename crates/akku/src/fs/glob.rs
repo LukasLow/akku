@@ -234,6 +234,46 @@ fn compile(pattern: &str) -> Result<(Vec<Seg>, bool), GlobError> {
     Ok((segments, absolute))
 }
 
+/// Compile a filesystem pattern into its literal root and segments.
+#[cfg(not(windows))]
+fn compile_for_fs(pattern: &str) -> Result<(PathBuf, Vec<Seg>), GlobError> {
+    let (segments, absolute) = compile(pattern)?;
+    let root = if absolute { "/" } else { "" };
+    Ok((PathBuf::from(root), segments))
+}
+
+/// Compile a filesystem pattern into its literal root and segments.
+///
+/// Windows paths carry a prefix (`C:`, `\\server\share`, `\\?\C:`) that
+/// is not a glob segment, and use `\` as a separator, so the prefix and root
+/// are split off with [`std::path::Path`] semantics and the rest is compiled
+/// with `\` read as `/`.
+#[cfg(windows)]
+fn compile_for_fs(pattern: &str) -> Result<(PathBuf, Vec<Seg>), GlobError> {
+    use std::path::Component;
+
+    let prefix_len = match Path::new(pattern).components().next() {
+        Some(Component::Prefix(prefix)) => prefix.as_os_str().len(),
+        _ => 0,
+    };
+    // `prefix_len` is the byte length of a leading `str` slice, so it is a
+    // char boundary.
+    let (prefix, rest) = pattern.split_at(prefix_len);
+    let rest = rest.replace('\\', "/");
+    let (segments, absolute) = compile(&rest).map_err(|err| match err {
+        GlobError::Syntax { position, issue } => GlobError::Syntax {
+            position: position + prefix_len,
+            issue,
+        },
+        other => other,
+    })?;
+    let mut root = String::from(prefix);
+    if absolute {
+        root.push('\\');
+    }
+    Ok((PathBuf::from(root), segments))
+}
+
 /// The issue found while parsing a pattern.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PatternIssue {
@@ -555,19 +595,21 @@ fn expand(base: &Path, segments: &[Seg], out: &mut Vec<PathBuf>) -> Result<(), G
 /// let _ = std::fs::remove_dir_all(&root);
 /// ```
 ///
+/// # Platform notes
+///
+/// On Windows a leading path prefix (`C:`, `\\server\share`, `\\?\C:`)
+/// and root are taken literally, and `\` is a path separator like `/`, so
+/// `C:\logs\*.txt` works; escape wildcards with a class instead (`[*]`,
+/// `[?]`). Elsewhere `\` escapes the next character.
+///
 /// # Errors
 ///
 /// Returns [`GlobError::Syntax`] for bad patterns and [`GlobError::Io`]
 /// when unreadable directories abort the expansion.
 pub fn glob(pattern: &str) -> Result<Vec<PathBuf>, GlobError> {
-    let (segments, absolute) = compile(pattern)?;
-    let root = if absolute {
-        Path::new("/")
-    } else {
-        Path::new("")
-    };
+    let (root, segments) = compile_for_fs(pattern)?;
     let mut out = Vec::new();
-    expand(root, &segments, &mut out)?;
+    expand(&root, &segments, &mut out)?;
     out.sort();
     out.dedup();
     Ok(out)
