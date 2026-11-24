@@ -1,0 +1,7 @@
+name = "base64"
+status = "native"
+wasm32 = true
+wave = 1
+summary = "Zero-dependency RFC 4648 Base64 encoding and decoding (standard, URL-safe, padded and unpadded)."
+owners = ["LukasLow"]
+tags = ["encoding", "rfc4648", "binary"]
