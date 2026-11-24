@@ -1,0 +1,7 @@
+name = "units"
+status = "native"
+wasm32 = true
+wave = 1
+summary = "Type-safe physical quantities and SI/imperial conversions for length, mass, temperature, data size, and time."
+owners = ["LukasLow"]
+tags = ["units", "si", "physics", "quantities"]
