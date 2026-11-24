@@ -1,0 +1,7 @@
+name = "mime"
+status = "native"
+wasm32 = true
+wave = 1
+summary = "RFC 2045/6838 MIME media type parser, parameter handling, and filename extension guessing."
+owners = ["LukasLow"]
+tags = ["mime", "media-type", "web", "http"]
