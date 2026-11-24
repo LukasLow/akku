@@ -1,0 +1,7 @@
+name = "xml"
+status = "native"
+wasm32 = true
+wave = 2
+summary = "Zero-dependency XML 1.0 pull parser, DOM, writer, and XXE-safe entity handling."
+owners = ["LukasLow"]
+tags = ["xml", "markup", "parser", "format"]
