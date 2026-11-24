@@ -403,8 +403,14 @@ mod windows {
 
     #[test]
     fn cmd_feeds_the_stdin_payload_and_reports_failures() {
-        let sorted = Cmd::new("sort").stdin_bytes("b\na\n").run().unwrap();
-        assert_eq!(lines(&sorted.stdout_lossy()), ["a", "b"]);
+        // `findstr` echoes stdin unchanged; `sort.exe` would sniff a short
+        // ASCII payload as UTF-16 and print garbage.
+        let echoed = Cmd::new("findstr")
+            .args(["/R", "^"])
+            .stdin_bytes("b\r\na\r\n")
+            .run()
+            .unwrap();
+        assert_eq!(lines(&echoed.stdout_lossy()), ["b", "a"]);
 
         let out = cmd("echo before&exit 3").run().unwrap();
         assert!(!out.success());

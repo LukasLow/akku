@@ -22,7 +22,7 @@
 //! such as `C:x` or an NTFS alternate data stream), reserved device names
 //! (`CON`, `NUL`, `COM1`, `LPT1.txt`, ...), and components ending in `.` or
 //! a space (silently stripped by Windows). Symlink entries are refused there
-//! with [`ExtractError::Unsupported`](error::ExtractError::Unsupported).
+//! with [`ExtractError::Unsupported`].
 //!
 //! # Examples
 //!
