@@ -65,4 +65,4 @@ Details: [`PullRequest`](.agents/workflows/PullRequest.md) · [`Release`](.agent
 | Backlog, roadmap | [`TODO.md`](TODO.md), [`docs/ROADMAP.md`](docs/ROADMAP.md) |
 | Changelog fragments | `.changes/unreleased/` |
 | Skills, workflows | [`.agents/README.md`](.agents/README.md) |
-| Host toolchains (wasm32) | [`flake.nix`](flake.nix) |
+| Host toolchains (wasm32, release prep) | [`flake.nix`](flake.nix) |

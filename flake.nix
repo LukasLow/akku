@@ -1,5 +1,5 @@
 {
-  description = "akku — host-side extra toolchains (e.g. wasm32 checks). Regular builds/tests still go through smd.";
+  description = "akku — host-side extra toolchains (wasm32 checks, release prep). Regular builds/tests still go through smd.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -19,11 +19,20 @@
         extensions = [ "clippy" ];
         targets = [ "wasm32-unknown-unknown" ];
       };
+      # The darwin linker needs libiconv for some std/all-features builds.
+      platformLibs = pkgs: pkgs.lib.optionals pkgs.stdenv.isDarwin [ pkgs.libiconv ];
+      # `nix shell .#release -c python3 .github/scripts/release.py 0.0.N`
+      # release.py needs python3, changie, and cargo (for `cargo update`).
+      releaseTools = pkgs: [ (toolchain pkgs) pkgs.python3 pkgs.changie ] ++ platformLibs pkgs;
     in
     {
-      packages = forAll (pkgs: { default = toolchain pkgs; });
+      packages = forAll (pkgs: {
+        default = toolchain pkgs;
+        release = pkgs.buildEnv { name = "akku-release-tools"; paths = releaseTools pkgs; };
+      });
       devShells = forAll (pkgs: {
-        default = pkgs.mkShell { packages = [ (toolchain pkgs) ]; };
+        default = pkgs.mkShell { packages = [ (toolchain pkgs) ] ++ platformLibs pkgs; };
+        release = pkgs.mkShell { packages = releaseTools pkgs; };
       });
     };
 }

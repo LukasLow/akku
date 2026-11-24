@@ -14,15 +14,15 @@ Publish the three crates `akku`, `akku-drive`, `akku-cli` to crates.io at an exp
 - Version rule: stay on `0.0.x` until at least 2027-Q2. The next version is `0.0.(N+1)`, always passed explicitly.
 
 ## Roles
-- **Orcha:** creates the branch, coordinates the prepare step, merges.
+- **Orcha:** creates the branch, runs the prepare step (step 2) on the host via the flake, merges.
 - **Checker:** reviews the release diff (version, changelog, notes), commits, and opens the PR per [PullRequest](PullRequest.md).
-- **Human:** requests the release; runs the prepare step while the smd image lacks `python3` and `changie` (see step 2).
+- **Human:** requests the release.
 
 ## Steps
 1. **Branch:** `git switch -c release/0.0.N main`. (`release/*` branches skip the changie-fragment CI check.)
-2. **Prepare:** `python3 .github/scripts/release.py 0.0.N`. It sets the workspace and internal dependency versions, runs `cargo update --workspace`, `changie batch 0.0.N`, `changie merge`, and writes `releases/v0.0.N-<date>.md`. It does not commit, tag, or publish.
+2. **Prepare:** `nix shell .#release -c python3 .github/scripts/release.py 0.0.N` (the flake's `release` env provides `python3`, `changie`, and the pinned `cargo`, which smd lacks). It sets the workspace and internal dependency versions, runs `cargo update --workspace`, `changie batch 0.0.N`, `changie merge`, and writes `releases/v0.0.N-<date>.md`. It does not commit, tag, or publish.
    - Always an explicit `0.0.N`. `auto`/`minor` (and `changie batch auto`) map `Added`/`Changed` to a minor bump and would produce `0.1.0`.
-3. **Check:** `python3 .github/scripts/release.py --check` reports "prepared"; `CHANGELOG.md` has `## 0.0.N - <date>`; `.changes/unreleased/` is empty; the workspace smd gate passes ([akku-smd-workflow](../skills/akku-smd-workflow/SKILL.md) §Workspace).
+3. **Check:** `nix shell .#release -c python3 .github/scripts/release.py --check` reports "prepared"; `CHANGELOG.md` has `## 0.0.N - <date>`; `.changes/unreleased/` is empty; the workspace smd gate passes ([akku-smd-workflow](../skills/akku-smd-workflow/SKILL.md) §Workspace).
 4. **PR:** Orcha writes the commit request (files: `Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`, `.changes/`, `releases/`) → Checker → PR titled `chore(release): 0.0.N` on branch `release/0.0.N` → merge per [PullRequest](PullRequest.md).
 5. **Publish (automatic):** the merge changes `Cargo.toml` on `main`, which triggers `release.yml`. It skips (without error) if tag `v0.0.N` exists, crates.io already has the version, or `CHANGELOG.md` has no `## 0.0.N` section; it fails if the notes file is missing or unreleased fragments remain; then publishes `akku-drive` → `akku` → `akku-cli` via crates.io Trusted Publishing and creates the GitHub release and tag `v0.0.N`.
 6. **Verify:** `gh run watch` on the release run; `gh release view v0.0.N`; the three crates show `0.0.N` on crates.io. Done when all three are visible.
