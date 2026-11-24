@@ -1,0 +1,7 @@
+name = "kv"
+status = "native"
+wasm32 = false
+wave = 2
+summary = "Zero-dependency key-value store with durable WAL, snapshots, and prefix scans."
+owners = ["LukasLow"]
+tags = ["kv", "storage", "wal", "database"]
