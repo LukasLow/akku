@@ -1,0 +1,7 @@
+name = "id"
+status = "native"
+wasm32 = true
+wave = 1
+summary = "Unique identifiers: RFC 9562 UUID v4/v7, monotonic ULIDs, and customizable NanoIDs."
+owners = ["LukasLow"]
+tags = ["id", "uuid", "ulid", "nanoid"]
