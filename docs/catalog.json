@@ -134,9 +134,9 @@
       "wasm32": true,
       "feature": null,
       "wave": 1,
-      "summary": "Zero-dependency hexadecimal encoding and decoding (lowercase, uppercase, and slice-into-buffer).",
+      "summary": "Hexadecimal (Base16) encoding and case-insensitive decoding, with allocation-free slice variants.",
       "owners": ["LukasLow"],
-      "tags": ["encoding", "hex", "binary"],
+      "tags": ["hex", "encoding", "binary", "base16", "rfc4648"],
       "derived_tags": ["native-0dep", "wasm32"],
       "source": null,
       "path": "crates/akku/src/hex"
