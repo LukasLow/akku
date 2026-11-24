@@ -2,13 +2,19 @@
 """Prepare or validate an Akku release.
 
 Usage:
-    python3 .github/scripts/release.py auto
     python3 .github/scripts/release.py 0.0.2
+    python3 .github/scripts/release.py patch
     python3 .github/scripts/release.py --check
 
 The workspace version in Cargo.toml is the single source of truth. The script
 updates it, runs changie batch/merge and writes releases/v<version>-<date>.md.
 It does not commit, tag or publish.
+
+Release guard: while RELEASE_SERIES is set, every version (the requested one
+and the one in Cargo.toml, checked by --check in ci.yml and release.yml) must
+be RELEASE_SERIES.N, and the `auto`, `minor` and `major` arguments are refused.
+akku stays on 0.0.x until at least 2027-Q2; lifting the guard is the one-line
+change `RELEASE_SERIES = None`.
 """
 
 from __future__ import annotations
@@ -29,14 +35,19 @@ UNRELEASED = ROOT / ".changes" / "unreleased"
 RELEASES = ROOT / "releases"
 CHANGIE = shutil.which("changie") or "changie"
 
-VERSION = re.compile(r"^\d+\.\d+\.\d+$")
+# Release guard (see the module docstring). Set to None to lift it.
+RELEASE_SERIES: str | None = "0.0"
+
+VERSION = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
+GUARDED_BUMPS = {"auto", "minor", "major"}
+# Mirrors the `auto:` values in .changie.yaml (all patch while on 0.0.x).
 KIND_BUMP = {
     "Fixed": "patch",
     "Security": "patch",
-    "Added": "minor",
-    "Changed": "minor",
-    "Deprecated": "minor",
-    "Removed": "minor",
+    "Added": "patch",
+    "Changed": "patch",
+    "Deprecated": "patch",
+    "Removed": "patch",
 }
 
 
@@ -49,6 +60,16 @@ def parse_version(value: str) -> tuple[int, int, int]:
     if not VERSION.match(value):
         fail(f"invalid semantic version {value!r}")
     return tuple(int(part) for part in value.split("."))  # type: ignore[return-value]
+
+
+def guard_version(value: str) -> None:
+    """Fail unless `value` is in RELEASE_SERIES (when the guard is active)."""
+    parse_version(value)
+    if RELEASE_SERIES is not None and not value.startswith(f"{RELEASE_SERIES}."):
+        fail(
+            f"version {value} is outside {RELEASE_SERIES}.x; akku stays on "
+            f"{RELEASE_SERIES}.x until at least 2027-Q2 (see RELEASE_SERIES)"
+        )
 
 
 def format_version(version: tuple[int, int, int]) -> str:
@@ -75,6 +96,11 @@ def fragment_bump(path: Path) -> str:
     text = path.read_text()
     explicit = re.search(r"(?m)^\s*version:\s*(patch|minor|major)\s*$", text)
     if explicit:
+        if RELEASE_SERIES is not None and explicit.group(1) != "patch":
+            fail(
+                f"{path}: `version: {explicit.group(1)}` is refused while "
+                f"releases stay on {RELEASE_SERIES}.x"
+            )
         return explicit.group(1)
     kind = re.search(r"(?m)^kind:\s*([A-Za-z]+)\s*$", text)
     if not kind:
@@ -173,7 +199,9 @@ def write_notes(version: str, date: str) -> Path:
 
 def check() -> None:
     version = cargo_version()
-    parse_version(version)
+    guard_version(version)
+    fragment_bumps()  # validates every fragment's kind and bump
+    print(f"release: guard OK, workspace version {version}")
     notes = sorted(RELEASES.glob(f"v{version}-*.md")) if RELEASES.is_dir() else []
     if notes:
         section = changelog_section(version)
@@ -198,8 +226,13 @@ def check() -> None:
 
 def prepare(requested: str) -> None:
     current = cargo_version()
-    parse_version(current)
+    guard_version(current)
 
+    if RELEASE_SERIES is not None and requested in GUARDED_BUMPS:
+        fail(
+            f"`{requested}` is refused while releases stay on {RELEASE_SERIES}.x; "
+            f"pass an explicit {RELEASE_SERIES}.N or `patch`"
+        )
     if requested == "auto":
         kind = highest(fragment_bumps())
         version = bump(current, kind)
@@ -210,6 +243,7 @@ def prepare(requested: str) -> None:
         parse_version(version)
         if parse_version(version) <= parse_version(current):
             fail(f"new version {version} must be greater than {current}")
+    guard_version(version)
 
     original = CARGO.read_text()
     try:
@@ -229,14 +263,18 @@ def prepare(requested: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Prepare an Akku release")
-    parser.add_argument("version", nargs="?", help="auto, patch, minor, major or X.Y.Z")
+    parser.add_argument(
+        "version",
+        nargs="?",
+        help="0.0.N or patch (auto/minor/major are refused while on 0.0.x)",
+    )
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     if args.check:
         check()
         return
     if not args.version:
-        parser.error("version is required (auto, patch, minor, major or X.Y.Z)")
+        parser.error("version is required (0.0.N or patch)")
     prepare(args.version)
 
 

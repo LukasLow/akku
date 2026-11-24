@@ -6,28 +6,22 @@ versionExt: md
 versionFormat: '## {{.Version}} - {{.Time.Format "2006-01-02"}}'
 kindFormat: '### {{.Kind}}'
 changeFormat: '* {{.Body}}'
+# Release guard: akku stays on 0.0.x until at least 2027-Q2, so every kind
+# bumps patch and there is no per-fragment version override. Releases always
+# pass an explicit 0.0.N to .github/scripts/release.py (see RELEASE_SERIES).
 kinds:
   - label: Added
-    auto: minor
+    auto: patch
   - label: Changed
-    auto: minor
+    auto: patch
   - label: Deprecated
-    auto: minor
+    auto: patch
   - label: Removed
-    auto: minor
+    auto: patch
   - label: Fixed
     auto: patch
   - label: Security
     auto: patch
-custom:
-  - key: version
-    label: Version bump
-    type: choice
-    options:
-      - patch
-      - minor
-      - major
-    optional: true
 newlines:
   afterChangelogHeader: 1
   beforeChangelogVersion: 1
