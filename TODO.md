@@ -30,7 +30,7 @@
 - [ ] Translate German docs to English: `CONCEPT.md`, `Namespace.md`, and the remaining sections of `docs/`. (Resolved: the handshake token is English, `hello Worker I am Orcha`; AGENTS.md and `.agents/` use it.)
 
 ### 0.4 Policies
-- [ ] **unsafe policy:** allowed **only** where unavoidable (FFI, OS syscalls/sockets, platform APIs), never for convenience or speed. Mechanics: crate-level `#![deny(unsafe_code)]`, `#[allow(unsafe_code)]` only in designated `sys` submodules, every block has a `// SAFETY:` comment (`clippy::undocumented_unsafe_blocks`), CI enforces an allowlist of files. Update AGENTS.md, CONCEPT.md and the skills.
+- [ ] **unsafe policy:** allowed **only** where unavoidable (FFI, OS syscalls/sockets, platform APIs), never for convenience or speed. Mechanics: crate-level `#![deny(unsafe_code)]`, `#[allow(unsafe_code)]` only in designated `sys` submodules, every block has a `// SAFETY:` comment (`clippy::undocumented_unsafe_blocks`), CI enforces an allowlist of files. AGENTS.md and the skills updated (PR #5); remaining: CONCEPT.md (with the translation) and the CI mechanics (0.6).
 - [ ] Namespace: flat-first stays; dissolve the planned `net` family → flat `net` (std::net superset), `dns`, `quic`; add `xdr`, `vfs`, `nfs` (`nfs::server`/`client`; ONC-RPC internal for now).
 - [ ] Only the 3 crates on crates.io (`akku`, `akku-drive`, `akku-cli`); everything else stays inside `akku`.
 
@@ -44,6 +44,7 @@
 - [ ] Gates on every PR: fmt, clippy `-D warnings`, tests (all features and no default features), rustdoc `-Dwarnings`, `catalog check`, unsafe allowlist, wasm32 check (`--no-default-features`).
 - [ ] **Release guard:** fail any release/version bump outside `0.0.x` (stay on `0.0.x` until at least 2027-Q2). Note: `.changie.yaml` has `Added/Changed/…: auto: minor`, so `changie batch auto` would produce `0.1.0`; change it to `patch` or forbid `auto`.
 - [ ] macOS / Linux / Windows runners (needed for the OS layer).
+- [ ] Changelog check: require a fragment *added by this PR* (today `check-changes.sh` passes if any fragment exists); create the `release` label if Release.md should use one.
 
 ### 0.7 OS layer (design first, as an RFC PR)
 - [ ] RFC: platform modules `akku::os::{unix, linux, macos, ios, android, windows}` (superset of `std::os`, cfg-gated); unified APIs stay flat domain modules (`clipboard`, `notify`, `secret`, `power`, …; media capture via `audio::device` / `vid::device`); errors `Unsupported` / `NotAvailable` / `PermissionDenied`; a per-platform support matrix in `meta.toml` → catalog/capabilities.

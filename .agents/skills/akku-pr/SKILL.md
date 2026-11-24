@@ -47,7 +47,7 @@ Skip preambles; keep prose brief; use [GLOSSARY](../../GLOSSARY.md) terms.
 
 ## Changie fragment
 
-CI (`check-changes.sh`) fails a PR without a fragment in `.changes/unreleased/` unless the PR has the `skip-changelog` label (or is a `release/*` branch).
+Every user-facing PR adds its own fragment in `.changes/unreleased/`; a PR that is not user-facing gets the `skip-changelog` label instead (`release/*` branches are exempt). Today CI (`check-changes.sh`) only checks that *some* fragment exists, so the Checker enforces "this PR added one" by reading the diff (stricter CI check: TODO 0.6).
 
 - **User-facing** (new/changed/removed public API, behaviour fix, security fix): the Worker adds `.changes/unreleased/<yyyy-mm-dd>-<slug>.yaml` and lists it in the commit request:
   ```yaml
