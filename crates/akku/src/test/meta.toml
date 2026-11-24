@@ -1,0 +1,7 @@
+name = "test"
+status = "native"
+wasm32 = false
+wave = 1
+summary = "Testing utilities: structured assertions, golden snapshot tests, temp workspaces, and HTTP TestServer."
+owners = ["LukasLow"]
+tags = ["test", "testing", "snapshot", "http"]
