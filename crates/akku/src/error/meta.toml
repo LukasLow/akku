@@ -1,0 +1,7 @@
+name = "error"
+status = "native"
+wasm32 = true
+wave = 1
+summary = "Dynamic error wrapper with lazy context chaining, source traversal, and ergonomic bail/ensure macros."
+owners = ["LukasLow"]
+tags = ["error", "diagnostics", "context"]
