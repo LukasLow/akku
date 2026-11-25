@@ -470,7 +470,7 @@ updated in a parallel PR.
 
 | Go package | Status | Path | Note |
 | --- | --- | --- | --- |
-| `unsafe` | `Rust std` | `unsafe`, `std::ptr`, `std::mem` | akku itself is `#![forbid(unsafe_code)]`; see the unsafe policy. |
+| `unsafe` | `Rust std` | `unsafe`, `std::ptr`, `std::mem` | akku itself is `#![deny(unsafe_code)]`; only allowlisted `sys` files opt in (see the unsafe policy). |
 
 ## uuid
 
