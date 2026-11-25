@@ -52,19 +52,34 @@
 //! `Vec` pre-allocation at `256` elements and grow incrementally as elements
 //! decode.
 //!
-//! # Rollback on encoder error
+//! # Rollback on encoder error or panic
 //!
-//! Every write on [`Encoder`] checks [`Limits::max_total_bytes`] before growing
-//! the output buffer. On any error, [`encode_into`] and [`Encoder::nest`]
-//! truncate the buffer back to the `start_len` recorded when the [`Encoder`]
-//! was created, preserving any pre-existing prefix bytes and leaving no partial
-//! record behind.
+//! Every write on [`Encoder`] validates bounds and [`Limits::max_total_bytes`]
+//! before mutating the output buffer:
+//!
+//! - Primitive and bounded-field writes (such as [`Encoder::encode_uint`],
+//!   [`Encoder::encode_opaque_bounded`], and [`Encoder::encode_str_bounded`])
+//!   write nothing on error and preserve all earlier completed writes in the
+//!   same [`Encoder`].
+//! - [`Encoder::nest`] (and the compound methods built on it) records a
+//!   checkpoint on entry and truncates the buffer back to that checkpoint on
+//!   error or panic, preserving writes made before entering the scope.
+//! - [`Encoder::encode`] records a checkpoint (the buffer length at the call)
+//!   and truncates back to it on error or panic, so a failed value leaves no
+//!   half-written bytes while earlier writes stay intact.
+//! - Top-level [`encode_into`] and [`encode_with`] start a fresh [`Encoder`],
+//!   so on error or panic the buffer is back at `start_len`, preserving any
+//!   pre-existing prefix bytes and leaving no half-written record behind.
 //!
 //! # Security
 //!
 //! Encoding and decoding are **not constant-time**; do not use them directly on
 //! secret material where timing side channels matter. Untrusted wire lengths
 //! and nesting depths are validated against [`Limits`] before allocating.
+//! Decoded in-memory size still depends on the schema: each wire byte can
+//! expand to roughly `size_of::<T>() / 4` bytes of `T` (for example a
+//! `Vec<Option<FixedOpaque<N>>>` with large `N`). Keep `N` small for types
+//! decoded from untrusted input, or lower [`Limits::max_array_len`].
 //!
 //! # Examples
 //!
@@ -122,7 +137,7 @@ fn initial_array_capacity<T>(count: usize, remaining_bytes: usize) -> usize {
         return 0;
     }
     let max_by_wire = remaining_bytes / 4;
-    let max_by_mem = (MAX_PREALLOC_BYTES / elem_size).max(1);
+    let max_by_mem = MAX_PREALLOC_BYTES / elem_size;
     count.min(MAX_PREALLOC).min(max_by_wire).min(max_by_mem)
 }
 
@@ -353,6 +368,17 @@ pub enum Error {
         /// Offending length value.
         len: usize,
     },
+    /// An array element consumed or produced zero wire bytes (for example
+    /// `void` / `()` or [`FixedOpaque<0>`]).
+    ///
+    /// RFC 4506 §6.3 forbids `void` as an array element type; rejecting
+    /// zero-byte elements on both encode and decode also prevents unbounded CPU
+    /// and memory amplification from small wire counts. Empty arrays
+    /// (`count == 0`) remain allowed.
+    ZeroSizedElement {
+        /// Byte offset where the zero-wire-byte element was encountered.
+        offset: usize,
+    },
 }
 
 impl fmt::Display for Error {
@@ -408,11 +434,53 @@ impl fmt::Display for Error {
             Self::LengthOverflow { offset, len } => {
                 write!(f, "XDR length {len} overflows usize at offset {offset}")
             }
+            Self::ZeroSizedElement { offset } => {
+                write!(f, "XDR array element has zero wire size at offset {offset}")
+            }
         }
     }
 }
 
 impl std::error::Error for Error {}
+
+struct EncoderNestGuard<'a, 'b> {
+    enc: &'b mut Encoder<'a>,
+    checkpoint: usize,
+    committed: bool,
+}
+
+impl Drop for EncoderNestGuard<'_, '_> {
+    fn drop(&mut self) {
+        self.enc.depth -= 1;
+        if !self.committed {
+            self.enc.buf.truncate(self.checkpoint);
+        }
+    }
+}
+
+struct EncoderTruncateGuard<'a, 'b> {
+    enc: &'b mut Encoder<'a>,
+    truncate_to: usize,
+    committed: bool,
+}
+
+impl Drop for EncoderTruncateGuard<'_, '_> {
+    fn drop(&mut self) {
+        if !self.committed {
+            self.enc.buf.truncate(self.truncate_to);
+        }
+    }
+}
+
+struct DecoderDepthGuard<'a, 'b> {
+    dec: &'b mut Decoder<'a>,
+}
+
+impl Drop for DecoderDepthGuard<'_, '_> {
+    fn drop(&mut self) {
+        self.dec.depth -= 1;
+    }
+}
 
 /// Imperative XDR encoder writing big-endian, 4-byte-aligned bytes into a
 /// caller-owned [`Vec<u8>`].
@@ -420,8 +488,18 @@ impl std::error::Error for Error {}
 /// The buffer may already contain prefix bytes (for example an ONC-RPC record
 /// header). [`Encoder::written`] and [`Limits::max_total_bytes`] are tracked
 /// relative to the buffer's length when the `Encoder` was created
-/// (`start_len`). On error, [`encode_into`] and [`Encoder::nest`] truncate the
-/// buffer back to `start_len`, preserving the prefix.
+/// (`start_len`).
+///
+/// # Rollback semantics
+///
+/// - Primitive and bounded-field writes validate bounds before mutating `buf`;
+///   on error they append nothing and leave earlier writes in `buf` intact.
+/// - [`Encoder::nest`] (and compound helpers built on it) rolls `buf` back to
+///   its entry checkpoint and restores `depth` on error or panic.
+/// - [`Encoder::encode`] rolls `buf` back to its own call checkpoint on error
+///   or panic, preserving earlier writes.
+/// - [`encode_into`] and [`encode_with`] use a fresh `Encoder`, so on error
+///   `buf` is back at `start_len`, preserving any pre-existing prefix bytes.
 #[derive(Debug)]
 pub struct Encoder<'a> {
     buf: &'a mut Vec<u8>,
@@ -458,23 +536,17 @@ impl<'a> Encoder<'a> {
         self.limits
     }
 
-    #[cold]
-    fn fail<T>(&mut self, err: Error) -> Result<T> {
-        self.buf.truncate(self.start_len);
-        Err(err)
-    }
-
     #[inline]
     fn reserve_bytes(&mut self, additional: usize) -> Result<()> {
         let offset = self.written();
         let Some(new_total) = offset.checked_add(additional) else {
-            return self.fail(Error::LengthOverflow {
+            return Err(Error::LengthOverflow {
                 offset,
                 len: additional,
             });
         };
         if new_total > self.limits.max_total_bytes {
-            return self.fail(Error::TotalBytesLimit {
+            return Err(Error::TotalBytesLimit {
                 offset,
                 limit: self.limits.max_total_bytes,
             });
@@ -496,27 +568,27 @@ impl<'a> Encoder<'a> {
             None => self.limits.max_opaque_len,
         };
         let Ok(len_u32) = u32::try_from(bytes.len()) else {
-            return self.fail(Error::LengthLimit {
+            return Err(Error::LengthLimit {
                 offset,
                 len: bytes.len(),
                 limit: effective_limit as usize,
             });
         };
         if len_u32 > effective_limit {
-            return self.fail(Error::LengthLimit {
+            return Err(Error::LengthLimit {
                 offset,
                 len: bytes.len(),
                 limit: effective_limit as usize,
             });
         }
         let Some(padded) = padded_len(bytes.len()) else {
-            return self.fail(Error::LengthOverflow {
+            return Err(Error::LengthOverflow {
                 offset,
                 len: bytes.len(),
             });
         };
         let Some(total) = padded.checked_add(4) else {
-            return self.fail(Error::LengthOverflow {
+            return Err(Error::LengthOverflow {
                 offset,
                 len: bytes.len(),
             });
@@ -596,6 +668,10 @@ impl<'a> Encoder<'a> {
     /// Encodes an IEEE 754 32-bit float (`float`, RFC 4506 §4.6) in big-endian
     /// bit order.
     ///
+    /// Raw IEEE 754 bit patterns (`f32::to_bits`) pass through unchanged
+    /// without NaN canonicalization or signaling-NaN quietening; non-canonical
+    /// NaN payloads and `-0.0` are preserved verbatim.
+    ///
     /// # Errors
     ///
     /// Returns [`Error::TotalBytesLimit`] if writing 4 bytes would exceed
@@ -606,6 +682,10 @@ impl<'a> Encoder<'a> {
 
     /// Encodes an IEEE 754 64-bit float (`double`, RFC 4506 §4.7) in big-endian
     /// bit order.
+    ///
+    /// Raw IEEE 754 bit patterns (`f64::to_bits`) pass through unchanged
+    /// without NaN canonicalization or signaling-NaN quietening; non-canonical
+    /// NaN payloads and `-0.0` are preserved verbatim.
     ///
     /// # Errors
     ///
@@ -623,6 +703,9 @@ impl<'a> Encoder<'a> {
     /// Encodes fixed-length opaque data (`opaque[n]`, RFC 4506 §4.9), followed
     /// by `0..=3` zero padding bytes.
     ///
+    /// Validates bounds before writing; on error, nothing is appended and
+    /// earlier writes in the buffer are preserved.
+    ///
     /// # Errors
     ///
     /// Returns [`Error::LengthOverflow`] if rounding `bytes.len()` up to a
@@ -631,7 +714,7 @@ impl<'a> Encoder<'a> {
     pub fn encode_fixed_opaque(&mut self, bytes: &[u8]) -> Result<()> {
         let offset = self.written();
         let Some(total) = padded_len(bytes.len()) else {
-            return self.fail(Error::LengthOverflow {
+            return Err(Error::LengthOverflow {
                 offset,
                 len: bytes.len(),
             });
@@ -649,6 +732,9 @@ impl<'a> Encoder<'a> {
     /// Encodes variable-length opaque data (`opaque<>`, RFC 4506 §4.10) bounded
     /// by [`Limits::max_opaque_len`].
     ///
+    /// Validates bounds before writing; on error, nothing is appended and
+    /// earlier writes in the buffer are preserved.
+    ///
     /// # Errors
     ///
     /// Returns [`Error::LengthLimit`] if `bytes.len()` exceeds
@@ -661,6 +747,9 @@ impl<'a> Encoder<'a> {
 
     /// Encodes variable-length opaque data (`opaque<max_len>`, RFC 4506 §4.10)
     /// bounded by `min(max_len, self.limits().max_opaque_len)`.
+    ///
+    /// Validates bounds before writing; on error, nothing is appended and
+    /// earlier writes in the buffer are preserved.
     ///
     /// # Errors
     ///
@@ -675,6 +764,9 @@ impl<'a> Encoder<'a> {
     /// Encodes a UTF-8 string (`string<>`, RFC 4506 §4.11) bounded by
     /// [`Limits::max_opaque_len`].
     ///
+    /// Validates bounds before writing; on error, nothing is appended and
+    /// earlier writes in the buffer are preserved.
+    ///
     /// # Errors
     ///
     /// Returns [`Error::LengthLimit`] if `s.len()` exceeds
@@ -687,6 +779,9 @@ impl<'a> Encoder<'a> {
 
     /// Encodes a UTF-8 string (`string<max_len>`, RFC 4506 §4.11) bounded by
     /// `min(max_len, self.limits().max_opaque_len)`.
+    ///
+    /// Validates bounds before writing; on error, nothing is appended and
+    /// earlier writes in the buffer are preserved.
     ///
     /// # Errors
     ///
@@ -701,8 +796,11 @@ impl<'a> Encoder<'a> {
     /// Runs `f` inside a depth-guarded compound scope.
     ///
     /// Increments the current depth before calling `f` and restores it when `f`
-    /// returns. If `f` returns an error (or the depth limit is exceeded), the
-    /// underlying buffer is truncated back to `start_len`.
+    /// exits (whether via `Ok`, `Err`, or unwind). Records the buffer length on
+    /// entry as a checkpoint; if `f` returns an error or panics, the underlying
+    /// buffer is truncated back to that checkpoint, preserving earlier writes
+    /// made before entering this scope. If the depth limit is already reached
+    /// on entry, nothing is written or truncated.
     ///
     /// # Errors
     ///
@@ -710,17 +808,21 @@ impl<'a> Encoder<'a> {
     /// [`Limits::max_depth`], or any error returned by `f`.
     pub fn nest<R>(&mut self, f: impl FnOnce(&mut Self) -> Result<R>) -> Result<R> {
         if self.depth >= self.limits.max_depth {
-            let offset = self.written();
-            return self.fail(Error::DepthLimit {
-                offset,
+            return Err(Error::DepthLimit {
+                offset: self.written(),
                 limit: self.limits.max_depth,
             });
         }
+        let checkpoint = self.buf.len();
         self.depth += 1;
-        let res = f(self);
-        self.depth -= 1;
-        if res.is_err() {
-            self.buf.truncate(self.start_len);
+        let mut guard = EncoderNestGuard {
+            enc: self,
+            checkpoint,
+            committed: false,
+        };
+        let res = f(guard.enc);
+        if res.is_ok() {
+            guard.committed = true;
         }
         res
     }
@@ -728,9 +830,14 @@ impl<'a> Encoder<'a> {
     /// Encodes a fixed-length array (`T[n]`, RFC 4506 §4.12) inside a
     /// depth-guarded scope.
     ///
+    /// Symmetric with [`Decoder::decode_fixed_array_vec`], an element that
+    /// writes zero wire bytes is rejected with [`Error::ZeroSizedElement`]
+    /// when `items` is non-empty (RFC 4506 §6.3); empty arrays succeed.
+    ///
     /// # Errors
     ///
-    /// Returns [`Error::DepthLimit`] or any error returned by `encode_item`.
+    /// Returns [`Error::DepthLimit`], [`Error::ZeroSizedElement`], or any
+    /// error returned by `encode_item`.
     pub fn encode_fixed_array<T>(
         &mut self,
         items: &[T],
@@ -738,7 +845,11 @@ impl<'a> Encoder<'a> {
     ) -> Result<()> {
         self.nest(|enc| {
             for item in items {
+                let before = enc.written();
                 encode_item(enc, item)?;
+                if enc.written() == before {
+                    return Err(Error::ZeroSizedElement { offset: before });
+                }
             }
             Ok(())
         })
@@ -750,10 +861,15 @@ impl<'a> Encoder<'a> {
     /// The effective item limit is `min(max_count, limits.max_array_len)` when
     /// `max_count` is `Some`, or `limits.max_array_len` when `None`.
     ///
+    /// Symmetric with [`Decoder::decode_array`], an element that writes zero
+    /// wire bytes is rejected with [`Error::ZeroSizedElement`] when `items` is
+    /// non-empty (RFC 4506 §6.3); empty arrays succeed.
+    ///
     /// # Errors
     ///
     /// Returns [`Error::DepthLimit`], [`Error::LengthLimit`],
-    /// [`Error::TotalBytesLimit`], or any error returned by `encode_item`.
+    /// [`Error::TotalBytesLimit`], [`Error::ZeroSizedElement`], or any error
+    /// returned by `encode_item`.
     pub fn encode_array<T>(
         &mut self,
         items: &[T],
@@ -782,7 +898,11 @@ impl<'a> Encoder<'a> {
             }
             enc.encode_uint(count_u32)?;
             for item in items {
+                let before = enc.written();
                 encode_item(enc, item)?;
+                if enc.written() == before {
+                    return Err(Error::ZeroSizedElement { offset: before });
+                }
             }
             Ok(())
         })
@@ -890,13 +1010,23 @@ impl<'a> Encoder<'a> {
 
     /// Encodes `value` using its [`XdrEncode`] implementation.
     ///
+    /// On error or panic, truncates the underlying buffer back to its length
+    /// at the start of this call, so no half-written value is left behind and
+    /// earlier writes (including any pre-existing prefix bytes) are preserved.
+    ///
     /// # Errors
     ///
     /// Propagates any error returned by [`XdrEncode::encode`].
     pub fn encode<T: XdrEncode + ?Sized>(&mut self, value: &T) -> Result<()> {
-        let res = value.encode(self);
-        if res.is_err() {
-            self.buf.truncate(self.start_len);
+        let truncate_to = self.buf.len();
+        let mut guard = EncoderTruncateGuard {
+            enc: self,
+            truncate_to,
+            committed: false,
+        };
+        let res = value.encode(guard.enc);
+        if res.is_ok() {
+            guard.committed = true;
         }
         res
     }
@@ -938,17 +1068,28 @@ impl<'a> Decoder<'a> {
         self.pos
     }
 
-    /// Returns the number of unread bytes remaining in the input slice.
+    /// Returns the number of unread bytes remaining in the underlying input
+    /// slice.
+    ///
+    /// This reflects the entire underlying slice regardless of
+    /// [`Limits::max_total_bytes`]; it is not capped by the remaining byte
+    /// budget.
     pub fn remaining(&self) -> usize {
         self.input.len().saturating_sub(self.pos)
     }
 
-    /// Returns `true` if no unread bytes remain.
+    /// Returns `true` if no unread bytes remain in the underlying input slice
+    /// (independent of [`Limits::max_total_bytes`]).
     pub fn is_empty(&self) -> bool {
         self.pos >= self.input.len()
     }
 
-    /// Returns the unread tail of the input slice.
+    /// Returns the unread tail of the underlying input slice without advancing
+    /// [`Self::position`].
+    ///
+    /// This exposes the entire remaining slice regardless of
+    /// [`Limits::max_total_bytes`]. Constructing a fresh [`Decoder`] from
+    /// `dec.rest()` starts a new `max_total_bytes` counter at zero.
     pub fn rest(&self) -> &'a [u8] {
         self.input.get(self.pos..).unwrap_or(&[])
     }
@@ -956,6 +1097,12 @@ impl<'a> Decoder<'a> {
     /// Returns the active [`Limits`] for this decoder.
     pub fn limits(&self) -> Limits {
         self.limits
+    }
+
+    #[inline]
+    fn remaining_budget(&self) -> usize {
+        self.remaining()
+            .min(self.limits.max_total_bytes.saturating_sub(self.pos))
     }
 
     #[inline]
@@ -989,7 +1136,13 @@ impl<'a> Decoder<'a> {
         Ok(out)
     }
 
-    /// Verifies that all input bytes have been consumed.
+    /// Verifies that all bytes in the underlying input slice have been
+    /// consumed.
+    ///
+    /// Unlike [`decode`] and [`decode_with`], callers driving [`Decoder::new`]
+    /// or [`Decoder::with_limits`] directly must call `finish()` if unconsumed
+    /// trailing bytes (including bytes past [`Limits::max_total_bytes`])
+    /// should be rejected.
     ///
     /// # Errors
     ///
@@ -1072,6 +1225,10 @@ impl<'a> Decoder<'a> {
 
     /// Decodes an IEEE 754 32-bit float (`float`, RFC 4506 §4.6).
     ///
+    /// Raw IEEE 754 bit patterns (`f32::from_bits`) pass through unchanged
+    /// without NaN canonicalization or signaling-NaN quietening; non-canonical
+    /// NaN payloads and `-0.0` are preserved verbatim.
+    ///
     /// # Errors
     ///
     /// Returns [`Error::UnexpectedEof`] or [`Error::TotalBytesLimit`].
@@ -1080,6 +1237,10 @@ impl<'a> Decoder<'a> {
     }
 
     /// Decodes an IEEE 754 64-bit float (`double`, RFC 4506 §4.7).
+    ///
+    /// Raw IEEE 754 bit patterns (`f64::from_bits`) pass through unchanged
+    /// without NaN canonicalization or signaling-NaN quietening; non-canonical
+    /// NaN payloads and `-0.0` are preserved verbatim.
     ///
     /// # Errors
     ///
@@ -1118,6 +1279,13 @@ impl<'a> Decoder<'a> {
 
     /// Decodes a fixed-length opaque array (`opaque[N]`, RFC 4506 §4.9) and
     /// verifies that the `0..=3` alignment padding bytes are zero.
+    ///
+    /// # Stack usage
+    ///
+    /// Materializes `[u8; N]` by value on the call stack; a large `N` can
+    /// overflow the thread stack even on empty input. For large fixed-length
+    /// payloads, prefer [`Self::decode_fixed_opaque_slice`] or
+    /// [`Self::decode_fixed_opaque_into`].
     ///
     /// # Errors
     ///
@@ -1219,7 +1387,7 @@ impl<'a> Decoder<'a> {
     /// Runs `f` inside a depth-guarded compound scope.
     ///
     /// Increments the current depth before calling `f` and restores it when `f`
-    /// returns (whether `Ok` or `Err`).
+    /// exits (whether via `Ok`, `Err`, or unwind).
     ///
     /// # Errors
     ///
@@ -1233,17 +1401,24 @@ impl<'a> Decoder<'a> {
             });
         }
         self.depth += 1;
-        let res = f(self);
-        self.depth -= 1;
-        res
+        let guard = DecoderDepthGuard { dec: self };
+        f(guard.dec)
     }
 
     /// Decodes a fixed-length array (`T[N]`, RFC 4506 §4.12) inside a
     /// depth-guarded scope.
     ///
+    /// # Stack usage
+    ///
+    /// Decodes elements into a heap-allocated `Vec<T>` and then moves `[T; N]`
+    /// by value onto the call stack; large `N * size_of::<T>()` can overflow
+    /// the thread stack. For large fixed-length arrays, prefer
+    /// [`Self::decode_fixed_array_vec`].
+    ///
     /// # Errors
     ///
-    /// Returns [`Error::DepthLimit`] or any error returned by `decode_item`.
+    /// Returns [`Error::DepthLimit`], [`Error::ZeroSizedElement`], or any
+    /// error returned by `decode_item`.
     pub fn decode_fixed_array<T, const N: usize>(
         &mut self,
         decode_item: impl FnMut(&mut Self) -> Result<T>,
@@ -1260,18 +1435,29 @@ impl<'a> Decoder<'a> {
     /// Initial pre-allocation is capped at `256` elements and grows
     /// incrementally as items decode.
     ///
+    /// If `count > 0` and `decode_item` consumes zero wire bytes, decoding
+    /// fails immediately with [`Error::ZeroSizedElement`] (RFC 4506 §6.3);
+    /// `count == 0` succeeds.
+    ///
     /// # Errors
     ///
-    /// Returns [`Error::DepthLimit`] or any error returned by `decode_item`.
+    /// Returns [`Error::DepthLimit`], [`Error::ZeroSizedElement`], or any
+    /// error returned by `decode_item`.
     pub fn decode_fixed_array_vec<T>(
         &mut self,
         count: usize,
         mut decode_item: impl FnMut(&mut Self) -> Result<T>,
     ) -> Result<Vec<T>> {
         self.nest(|dec| {
-            let mut out = Vec::with_capacity(initial_array_capacity::<T>(count, dec.remaining()));
+            let mut out =
+                Vec::with_capacity(initial_array_capacity::<T>(count, dec.remaining_budget()));
             for _ in 0..count {
-                out.push(decode_item(dec)?);
+                let before = dec.pos;
+                let item = decode_item(dec)?;
+                if dec.pos == before {
+                    return Err(Error::ZeroSizedElement { offset: before });
+                }
+                out.push(item);
             }
             Ok(out)
         })
@@ -1284,11 +1470,15 @@ impl<'a> Decoder<'a> {
     /// incrementally so a truncated buffer with a large count cannot
     /// over-allocate.
     ///
+    /// If `count > 0` and `decode_item` consumes zero wire bytes, decoding
+    /// fails immediately with [`Error::ZeroSizedElement`] (RFC 4506 §6.3);
+    /// `count == 0` succeeds.
+    ///
     /// # Errors
     ///
     /// Returns [`Error::DepthLimit`], [`Error::LengthLimit`],
-    /// [`Error::TotalBytesLimit`], [`Error::UnexpectedEof`], or any error
-    /// returned by `decode_item`.
+    /// [`Error::TotalBytesLimit`], [`Error::UnexpectedEof`],
+    /// [`Error::ZeroSizedElement`], or any error returned by `decode_item`.
     pub fn decode_array<T>(
         &mut self,
         max_count: Option<u32>,
@@ -1312,9 +1502,15 @@ impl<'a> Decoder<'a> {
                 offset: item_offset,
                 len: usize::MAX,
             })?;
-            let mut out = Vec::with_capacity(initial_array_capacity::<T>(count, dec.remaining()));
+            let mut out =
+                Vec::with_capacity(initial_array_capacity::<T>(count, dec.remaining_budget()));
             for _ in 0..count {
-                out.push(decode_item(dec)?);
+                let before = dec.pos;
+                let item = decode_item(dec)?;
+                if dec.pos == before {
+                    return Err(Error::ZeroSizedElement { offset: before });
+                }
+                out.push(item);
             }
             Ok(out)
         })
@@ -1346,6 +1542,11 @@ impl<'a> Decoder<'a> {
     ///
     /// Uses O(1) call-stack depth regardless of list length, enforcing
     /// `min(max_count, limits.max_array_len)` on the element count.
+    ///
+    /// Zero-wire-byte items are accepted here and do not need a
+    /// [`Error::ZeroSizedElement`] check: every element is preceded by a 4-byte
+    /// `TRUE` presence flag, so iterations are bounded by the input length and
+    /// [`Limits::max_total_bytes`].
     ///
     /// # Errors
     ///
@@ -1385,7 +1586,27 @@ impl<'a> Decoder<'a> {
     /// and dispatches to `decode_arm`.
     ///
     /// This method does not construct [`Error::InvalidDiscriminant`] itself;
-    /// callers build and return it from `decode_arm` for unknown tags.
+    /// callers build and return it from `decode_arm` for unknown tags. Because
+    /// the 4-byte discriminant is already consumed when `decode_arm` runs, the
+    /// discriminant's byte offset is `dec.position().saturating_sub(4)` (not
+    /// `dec.position()`):
+    ///
+    /// ```
+    /// use akku::xdr::{Decoder, Error};
+    ///
+    /// let wire = 99i32.to_be_bytes();
+    /// let mut dec = Decoder::new(&wire);
+    /// let err = dec
+    ///     .decode_union_i32(|tag, d| match tag {
+    ///         0 => d.decode_void(),
+    ///         other => Err(Error::InvalidDiscriminant {
+    ///             offset: d.position().saturating_sub(4),
+    ///             value: other,
+    ///         }),
+    ///     })
+    ///     .unwrap_err();
+    /// assert_eq!(err, Error::InvalidDiscriminant { offset: 0, value: 99 });
+    /// ```
     ///
     /// # Errors
     ///
@@ -1406,7 +1627,10 @@ impl<'a> Decoder<'a> {
     /// scope and dispatches to `decode_arm`.
     ///
     /// This method does not construct [`Error::InvalidDiscriminant`] itself;
-    /// callers build and return it from `decode_arm` for unknown tags.
+    /// callers build and return it from `decode_arm` for unknown tags. Because
+    /// the 4-byte discriminant is already consumed when `decode_arm` runs, pass
+    /// `offset: dec.position().saturating_sub(4)` and `value: tag as i32` when
+    /// constructing [`Error::InvalidDiscriminant`].
     ///
     /// # Errors
     ///
@@ -1469,6 +1693,13 @@ pub struct Opaque(pub Vec<u8>);
 ///
 /// Distinct from `[T; N]` fixed-length arrays, whose elements are each 4-byte
 /// aligned.
+///
+/// # Stack usage
+///
+/// Stores `[u8; N]` inline by value; a large `N` can overflow the call stack
+/// when constructed or decoded via [`XdrDecode`]. For large fixed-length
+/// payloads, prefer [`Decoder::decode_fixed_opaque_slice`] or
+/// [`Decoder::decode_fixed_opaque_into`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FixedOpaque<const N: usize>(pub [u8; N]);
 
@@ -1689,8 +1920,8 @@ pub fn encode<T: XdrEncode + ?Sized>(value: &T) -> Result<Vec<u8>> {
 
 /// Encodes `value` by appending to `buf` using default [`Limits`].
 ///
-/// Any pre-existing bytes in `buf` are preserved. On error, `buf` is truncated
-/// back to its original length before returning.
+/// Any pre-existing bytes in `buf` are preserved. On error or panic, `buf` is
+/// truncated back to its original length before returning or unwinding.
 ///
 /// # Errors
 ///
@@ -1776,4 +2007,31 @@ pub fn decode_with<T: XdrDecode>(input: &[u8], limits: Limits) -> Result<T> {
     let value = dec.decode()?;
     dec.finish()?;
     Ok(value)
+}
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    // Public-API tests cannot inspect the internal `Vec` capacity before
+    // element 0 fails and drops the `Vec`, so we verify `initial_array_capacity`
+    // and `remaining_budget` directly here.
+    #[test]
+    fn initial_array_capacity_is_zero_above_4096_bytes_and_respects_budget() {
+        assert_eq!(initial_array_capacity::<[u8; 4097]>(1, 4096), 0);
+        assert_eq!(initial_array_capacity::<[u8; 65_536]>(65_536, 65_536), 0);
+        assert_eq!(initial_array_capacity::<[u8; 4096]>(4, 4096), 1);
+        assert_eq!(initial_array_capacity::<u32>(256, 0), 0);
+
+        let mut wire = vec![0u8; 4096];
+        wire[..4].copy_from_slice(&256u32.to_be_bytes());
+        let mut dec = Decoder::with_limits(&wire, Limits::new().with_max_total_bytes(4));
+        assert_eq!(dec.decode_uint().unwrap(), 256);
+        assert_eq!(dec.remaining(), 4092);
+        assert_eq!(dec.remaining_budget(), 0);
+        assert_eq!(
+            initial_array_capacity::<u32>(256, dec.remaining_budget()),
+            0
+        );
+    }
 }

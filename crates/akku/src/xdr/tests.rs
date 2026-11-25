@@ -2132,3 +2132,369 @@ fn error_display_and_std_error_trait_cover_all_variants() {
         assert_eq!(boxed.to_string(), msg);
     }
 }
+
+// --- G5 audit regression tests ---------------------------------------------
+
+#[test]
+fn rejects_zero_byte_array_elements_fast_and_allows_empty() {
+    // 1. Vec<Box<()>> with count 65_536 fails fast without allocating.
+    assert_eq!(
+        xdr::decode::<Vec<Box<()>>>(&65_536u32.to_be_bytes()),
+        Err(Error::ZeroSizedElement { offset: 4 })
+    );
+
+    // 2. Vec<[Box<()>; 64]> with count 65_536 fails fast on the first element.
+    assert_eq!(
+        xdr::decode::<Vec<[Box<()>; 64]>>(&65_536u32.to_be_bytes()),
+        Err(Error::ZeroSizedElement { offset: 4 })
+    );
+
+    // 3. Vec<()> with max_array_len = u32::MAX and count = u32::MAX returns
+    //    immediately on element 0 (no 4B-iteration loop).
+    let wide = Limits::new().with_max_array_len(u32::MAX);
+    assert_eq!(
+        xdr::decode_with::<Vec<()>>(&u32::MAX.to_be_bytes(), wide),
+        Err(Error::ZeroSizedElement { offset: 4 })
+    );
+
+    // 4. Nested Vec<Vec<()>>: non-empty inner fails fast; empty inner/outer succeed.
+    let mut nested_bad = Vec::with_capacity(8);
+    nested_bad.extend_from_slice(&65_536u32.to_be_bytes());
+    nested_bad.extend_from_slice(&65_536u32.to_be_bytes());
+    assert_eq!(
+        xdr::decode::<Vec<Vec<()>>>(&nested_bad),
+        Err(Error::ZeroSizedElement { offset: 8 })
+    );
+    assert_eq!(
+        xdr::decode::<Vec<Vec<()>>>(&0u32.to_be_bytes()),
+        Ok(Vec::new())
+    );
+    assert_eq!(
+        xdr::decode::<Vec<Vec<()>>>(&[0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0]),
+        Ok(vec![Vec::new(), Vec::new()])
+    );
+
+    // 5. count == 0 succeeds for variable and fixed zero-byte element arrays.
+    assert_eq!(xdr::decode::<Vec<()>>(&0u32.to_be_bytes()), Ok(Vec::new()));
+    assert_eq!(
+        xdr::decode::<Vec<Box<()>>>(&0u32.to_be_bytes()),
+        Ok(Vec::new())
+    );
+    assert_eq!(
+        xdr::decode::<Vec<[Box<()>; 64]>>(&0u32.to_be_bytes()),
+        Ok(Vec::new())
+    );
+    assert_eq!(xdr::decode::<[(); 0]>(b""), Ok([]));
+    assert_eq!(
+        Decoder::new(b"").decode_fixed_array_vec(0, |d| d.decode_void()),
+        Ok(Vec::new())
+    );
+
+    // 6. Fixed arrays and FixedOpaque<0> arrays with count > 0 also fail fast.
+    assert_eq!(
+        xdr::decode::<[(); 1]>(b""),
+        Err(Error::ZeroSizedElement { offset: 0 })
+    );
+    assert_eq!(
+        Decoder::new(b"").decode_fixed_array_vec(65_536, |d| d.decode_void()),
+        Err(Error::ZeroSizedElement { offset: 0 })
+    );
+    assert_eq!(
+        xdr::decode::<Vec<FixedOpaque<0>>>(&1u32.to_be_bytes()),
+        Err(Error::ZeroSizedElement { offset: 4 })
+    );
+
+    // 7. Symmetric encoder behavior: empty succeeds, non-empty zero-byte element
+    //    fails fast without looping and rolls back the written count prefix.
+    assert_eq!(xdr::encode(&Vec::<()>::new()), Ok(vec![0, 0, 0, 0]));
+    assert_eq!(xdr::encode(&[(); 0]), Ok(Vec::new()));
+    assert_eq!(
+        xdr::encode(&vec![(); 1]),
+        Err(Error::ZeroSizedElement { offset: 4 })
+    );
+    assert_eq!(
+        xdr::encode_with(&vec![(); 1_000_000], wide),
+        Err(Error::ZeroSizedElement { offset: 4 })
+    );
+    assert_eq!(
+        xdr::encode(&[(); 4]),
+        Err(Error::ZeroSizedElement { offset: 0 })
+    );
+
+    let mut buf = vec![0xaa, 0xbb, 0xcc, 0xdd];
+    assert_eq!(
+        xdr::encode_into(&vec![(); 2], &mut buf),
+        Err(Error::ZeroSizedElement { offset: 4 })
+    );
+    assert_eq!(buf, [0xaa, 0xbb, 0xcc, 0xdd]);
+}
+
+#[test]
+fn error_display_covers_zero_sized_element() {
+    let err = Error::ZeroSizedElement { offset: 44 };
+    let msg = err.to_string();
+    assert!(!msg.is_empty());
+    assert!(msg.contains("44"), "expected offset in Display: {msg}");
+    let boxed: Box<dyn std::error::Error + Send + Sync> = Box::new(err);
+    assert_eq!(boxed.to_string(), msg);
+}
+
+#[test]
+fn decode_array_respects_prealloc_byte_cap_and_max_total_bytes_budget() {
+    // Audit trigger 1: 8-byte wire claiming 1 element of size > 4096 bytes
+    // must fail cleanly with UnexpectedEof without pre-allocating element 0.
+    let short_wire = [0, 0, 0, 1, 0, 0, 0, 0];
+    assert_eq!(
+        Decoder::new(&short_wire).decode_array(None, |d| d.decode_fixed_opaque::<8192>()),
+        Err(Error::UnexpectedEof {
+            offset: 4,
+            needed: 8192,
+            remaining: 4,
+        })
+    );
+    assert_eq!(
+        Decoder::new(&short_wire[4..])
+            .decode_fixed_array_vec(1, |d| d.decode_fixed_opaque::<8192>()),
+        Err(Error::UnexpectedEof {
+            offset: 0,
+            needed: 8192,
+            remaining: 4,
+        })
+    );
+
+    // Audit trigger 2: 4096-byte buffer starting with count=256 under
+    // max_total_bytes=4 has 0 bytes of budget left after reading the count.
+    let mut big_wire = vec![0u8; 4096];
+    big_wire[..4].copy_from_slice(&256u32.to_be_bytes());
+    let tight = Limits::new().with_max_total_bytes(4);
+    assert_eq!(
+        Decoder::with_limits(&big_wire, tight).decode_array(None, |d| d.decode_uint()),
+        Err(Error::TotalBytesLimit {
+            offset: 4,
+            limit: 4,
+        })
+    );
+
+    // Observe Vec::capacity() on returned Vecs for large elements and tight budgets.
+    #[allow(dead_code)]
+    struct Over4k([u8; 4097]);
+
+    let empty_over4k: Vec<Over4k> = Decoder::new(&0u32.to_be_bytes())
+        .decode_array(None, |d| {
+            let _ = d.decode_uint()?;
+            Ok(Over4k([0u8; 4097]))
+        })
+        .unwrap();
+    assert_eq!(empty_over4k.len(), 0);
+    assert_eq!(empty_over4k.capacity(), 0);
+
+    let one_over4k: Vec<Over4k> = Decoder::new(&[0, 0, 0, 1, 0, 0, 0, 7])
+        .decode_array(None, |d| {
+            let b = d.decode_uint()? as u8;
+            Ok(Over4k([b; 4097]))
+        })
+        .unwrap();
+    assert_eq!(one_over4k.len(), 1);
+    assert_eq!(one_over4k.capacity(), 1);
+
+    // Tight max_total_bytes on a large buffer: capacity matches decoded count.
+    let mut four_u32s = vec![0u8; 4096];
+    four_u32s[..4].copy_from_slice(&4u32.to_be_bytes());
+    let decoded = Decoder::with_limits(&four_u32s, Limits::new().with_max_total_bytes(20))
+        .decode_array(None, |d| d.decode_uint())
+        .unwrap();
+    assert_eq!(decoded, [0, 0, 0, 0]);
+    assert_eq!(decoded.capacity(), 4);
+
+    let fixed_decoded =
+        Decoder::with_limits(&four_u32s[4..], Limits::new().with_max_total_bytes(16))
+            .decode_fixed_array_vec(4, |d| d.decode_uint())
+            .unwrap();
+    assert_eq!(fixed_decoded, [0, 0, 0, 0]);
+    assert_eq!(fixed_decoded.capacity(), 4);
+}
+
+#[test]
+fn nest_and_encode_restore_depth_and_rollback_buffer_on_panic() {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    // 1. Encoder::nest restores depth and truncates back to entry checkpoint on panic.
+    let prefix = [0xaa, 0xbb, 0xcc, 0xdd];
+    let mut buf = prefix.to_vec();
+    {
+        let mut enc = Encoder::with_limits(&mut buf, Limits::new().with_max_depth(1));
+        enc.encode_uint(0x0102_0304).unwrap();
+        let unwound = catch_unwind(AssertUnwindSafe(|| {
+            let _ = enc.nest(|e| -> Result<()> {
+                e.encode_uint(0x1122_3344)?;
+                panic!("encoder nest panic");
+            });
+        }));
+        assert!(unwound.is_err());
+        // Depth must be restored so a subsequent max_depth=1 nest succeeds.
+        enc.nest(|e| e.encode_uint(0x5566_7788)).unwrap();
+        assert_eq!(enc.written(), 8);
+    }
+    assert_eq!(
+        buf,
+        [
+            0xaa, 0xbb, 0xcc, 0xdd, // prefix
+            0x01, 0x02, 0x03, 0x04, // written before panicked nest
+            0x55, 0x66, 0x77, 0x88, // written after recovery
+        ]
+    );
+
+    // 2. encode_into truncates back to start_len on panic; Encoder::encode
+    //    truncates back to its own call checkpoint, keeping earlier writes.
+    struct PanickingEncode;
+    impl XdrEncode for PanickingEncode {
+        fn encode(&self, enc: &mut Encoder<'_>) -> Result<()> {
+            enc.encode_uint(0xdead_beef)?;
+            panic!("encode_into panic");
+        }
+    }
+
+    let mut buf = vec![0xde, 0xad, 0xbe, 0xef];
+    let unwound = catch_unwind(AssertUnwindSafe(|| {
+        let _ = xdr::encode_into(&PanickingEncode, &mut buf);
+    }));
+    assert!(unwound.is_err());
+    assert_eq!(buf, [0xde, 0xad, 0xbe, 0xef]);
+
+    let mut buf = vec![0xca, 0xfe];
+    {
+        let mut enc = Encoder::new(&mut buf);
+        enc.encode_uint(0x1111_2222).unwrap();
+        let unwound = catch_unwind(AssertUnwindSafe(|| {
+            let _ = enc.encode(&PanickingEncode);
+        }));
+        assert!(unwound.is_err());
+        assert_eq!(enc.written(), 4);
+    }
+    assert_eq!(buf, [0xca, 0xfe, 0x11, 0x11, 0x22, 0x22]);
+
+    // 3. Decoder::nest restores depth on panic.
+    let wire = [0, 0, 0, 1, 0, 0, 0, 42];
+    let mut dec = Decoder::with_limits(&wire, Limits::new().with_max_depth(1));
+    let unwound = catch_unwind(AssertUnwindSafe(|| {
+        let _ = dec.nest(|d| -> Result<()> {
+            let _ = d.decode_uint()?;
+            panic!("decoder nest panic");
+        });
+    }));
+    assert!(unwound.is_err());
+    assert_eq!(dec.nest(|d| d.decode_uint()).unwrap(), 42);
+    dec.finish().unwrap();
+}
+
+#[test]
+fn encoder_recoverable_length_limit_preserves_prior_writes() {
+    let mut buf = Vec::new();
+    let mut enc = Encoder::new(&mut buf);
+    enc.encode_uint(0x1234_5678).unwrap();
+    assert_eq!(
+        enc.encode_str_bounded("toolong", 4),
+        Err(Error::LengthLimit {
+            offset: 4,
+            len: 7,
+            limit: 4,
+        })
+    );
+    enc.encode_str_bounded("ok", 4).unwrap();
+    assert_eq!(buf, [0x12, 0x34, 0x56, 0x78, 0, 0, 0, 2, b'o', b'k', 0, 0]);
+}
+
+#[test]
+fn encoder_nest_rolls_back_to_entry_checkpoint_preserving_prior_writes() {
+    // Inner `nest` failure rolls back only to its entry checkpoint, preserving
+    // earlier writes in the same Encoder.
+    let mut buf = vec![0xfe, 0xed];
+    {
+        let mut enc = Encoder::new(&mut buf);
+        enc.encode_uint(0x1234_5678).unwrap();
+        assert_eq!(
+            enc.nest(|e| {
+                e.encode_uint(0xaaaa_bbbb)?;
+                e.encode_str_bounded("toolong", 4)
+            }),
+            Err(Error::LengthLimit {
+                offset: 8,
+                len: 7,
+                limit: 4,
+            })
+        );
+        assert_eq!(enc.written(), 4);
+        enc.encode_str_bounded("ok", 4).unwrap();
+    }
+    assert_eq!(
+        buf,
+        [0xfe, 0xed, 0x12, 0x34, 0x56, 0x78, 0, 0, 0, 2, b'o', b'k', 0, 0]
+    );
+
+    // Pre-write TotalBytesLimit on a primitive write also preserves prior writes.
+    let mut buf = Vec::new();
+    let mut enc = Encoder::with_limits(&mut buf, Limits::new().with_max_total_bytes(4));
+    enc.encode_uint(0x1234_5678).unwrap();
+    assert_eq!(
+        enc.encode_uint(0x9999_9999),
+        Err(Error::TotalBytesLimit {
+            offset: 4,
+            limit: 4,
+        })
+    );
+    assert_eq!(buf, [0x12, 0x34, 0x56, 0x78]);
+}
+
+#[test]
+fn decode_list_accepts_zero_byte_items_bounded_by_presence_flags() {
+    // Each list node carries a 4-byte presence flag, so zero-byte items cannot
+    // amplify work beyond the input length; no ZeroSizedElement is raised.
+    assert_eq!(
+        Decoder::new(&[0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0]).decode_list(None, |d| d.decode_void()),
+        Ok(vec![(), ()])
+    );
+    let mut buf = Vec::new();
+    Encoder::new(&mut buf)
+        .encode_list(&[(), ()], None, |e, _| e.encode_void())
+        .unwrap();
+    assert_eq!(buf, [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0]);
+}
+
+#[test]
+fn encoder_encode_rolls_back_to_call_checkpoint_not_start_len() {
+    // Re-audit finding: `Encoder::encode` used mid-stream must only undo its own
+    // partial bytes, never earlier writes in the same Encoder or an outer `nest`.
+    struct Bad;
+    impl XdrEncode for Bad {
+        fn encode(&self, enc: &mut Encoder<'_>) -> Result<()> {
+            enc.encode_uint(0xdead_beef)?;
+            enc.encode_str_bounded("toolong", 4)
+        }
+    }
+
+    let mut buf = vec![0xaa];
+    {
+        let mut enc = Encoder::new(&mut buf);
+        enc.encode_uint(1).unwrap();
+        enc.nest(|e| {
+            e.encode_uint(2)?;
+            assert_eq!(
+                e.encode(&Bad),
+                Err(Error::LengthLimit {
+                    offset: 12,
+                    len: 7,
+                    limit: 4,
+                })
+            );
+            e.encode_uint(3)
+        })
+        .unwrap();
+        assert_eq!(enc.written(), 12);
+    }
+    assert_eq!(buf, [0xaa, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3]);
+
+    // Top-level `encode_into` still leaves the buffer exactly at its prefix.
+    let mut buf = vec![0xaa, 0xbb];
+    assert!(xdr::encode_into(&Bad, &mut buf).is_err());
+    assert_eq!(buf, [0xaa, 0xbb]);
+}
