@@ -49,5 +49,6 @@
 | `akku::template` | `native` | yes | - | `@LukasLow` | Zero-dependency auto-escaping template engine with AST compiler, blocks, and filters. |
 | `akku::text` | `native` | yes | - | `@LukasLow` | Zero-dependency Unicode UAX #29 graphemes, text helpers, and Myers diff engine. |
 | `akku::ws` | `native` | yes | - | `@LukasLow` | Zero-dependency RFC 6455 WebSocket framing, handshake, masking, and UTF-8 state machine. |
+| `akku::xdr` | `native` | yes | - | `@LukasLow` | Strict big-endian XDR (RFC 4506 / STD 67) binary encoding and decoding with DoS limits. |
 | `akku::xml` | `native` | yes | - | `@LukasLow` | Zero-dependency XML 1.0 pull parser, DOM, writer, and XXE-safe entity handling. |
 | `akku::yaml` | `native` | yes | - | `@LukasLow` | Zero-dependency YAML 1.2 Core Schema parser, value model, multi-doc streams, and serializer. |

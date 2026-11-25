@@ -37,5 +37,6 @@ crates/akku/src/toml/** @LukasLow
 crates/akku/src/units/** @LukasLow
 crates/akku/src/url/** @LukasLow
 crates/akku/src/ws/** @LukasLow
+crates/akku/src/xdr/** @LukasLow
 crates/akku/src/xml/** @LukasLow
 crates/akku/src/yaml/** @LukasLow

@@ -18,6 +18,9 @@ const MAX_TOTAL_NANOS: i128 = (i64::MAX as i128) * NANOS_PER_SEC + 999_999_999;
 
 /// A signed span of time with nanosecond precision.
 ///
+/// Named to match [`jiff::SignedDuration`](https://docs.rs/jiff/latest/jiff/struct.SignedDuration.html)
+/// and avoid shadowing [`std::time::Duration`] (re-exported at [`crate::time::Duration`]).
+///
 /// Internally stored as a normalized `(secs, nanos)` pair where
 /// `-999_999_999 <= nanos <= 999_999_999`, and `secs` and `nanos` never have
 /// opposite signs.
@@ -25,20 +28,20 @@ const MAX_TOTAL_NANOS: i128 = (i64::MAX as i128) * NANOS_PER_SEC + 999_999_999;
 /// # Examples
 ///
 /// ```
-/// use akku::time::Duration;
+/// use akku::time::SignedDuration;
 ///
-/// let d: Duration = "1h30m500ms".parse().unwrap();
+/// let d: SignedDuration = "1h30m500ms".parse().unwrap();
 /// assert_eq!(d.as_secs(), 5400);
 /// assert_eq!(d.subsec_nanos(), 500_000_000);
 /// assert_eq!(d.to_string(), "1h30m500ms");
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct Duration {
+pub struct SignedDuration {
     secs: i64,
     nanos: i32,
 }
 
-impl Duration {
+impl SignedDuration {
     /// A zero-length duration.
     pub const ZERO: Self = Self { secs: 0, nanos: 0 };
 
@@ -54,7 +57,7 @@ impl Duration {
         nanos: 999_999_999,
     };
 
-    /// Creates a new `Duration` from whole seconds and additional nanoseconds,
+    /// Creates a new `SignedDuration` from whole seconds and additional nanoseconds,
     /// normalizing the result.
     ///
     /// # Panics
@@ -65,7 +68,7 @@ impl Duration {
         Self::from_total_nanos(total).expect("duration overflow")
     }
 
-    /// Creates a `Duration` from a total nanosecond count, returning `None` on overflow.
+    /// Creates a `SignedDuration` from a total nanosecond count, returning `None` on overflow.
     pub(crate) fn from_total_nanos(total: i128) -> Option<Self> {
         if !(MIN_TOTAL_NANOS..=MAX_TOTAL_NANOS).contains(&total) {
             return None;
@@ -75,29 +78,29 @@ impl Duration {
         Some(Self { secs, nanos })
     }
 
-    /// Creates a `Duration` from a number of whole seconds.
+    /// Creates a `SignedDuration` from a number of whole seconds.
     pub const fn from_secs(secs: i64) -> Self {
         Self { secs, nanos: 0 }
     }
 
-    /// Creates a `Duration` from a number of milliseconds.
+    /// Creates a `SignedDuration` from a number of milliseconds.
     pub fn from_millis(millis: i64) -> Self {
         let total = i128::from(millis) * NANOS_PER_MILLI;
         Self::from_total_nanos(total).expect("duration overflow")
     }
 
-    /// Creates a `Duration` from a number of microseconds.
+    /// Creates a `SignedDuration` from a number of microseconds.
     pub fn from_micros(micros: i64) -> Self {
         let total = i128::from(micros) * NANOS_PER_MICRO;
         Self::from_total_nanos(total).expect("duration overflow")
     }
 
-    /// Creates a `Duration` from a number of nanoseconds.
+    /// Creates a `SignedDuration` from a number of nanoseconds.
     pub fn from_nanos(nanos: i64) -> Self {
         Self::from_total_nanos(i128::from(nanos)).expect("duration overflow")
     }
 
-    /// Creates a `Duration` from a number of minutes.
+    /// Creates a `SignedDuration` from a number of minutes.
     ///
     /// # Panics
     ///
@@ -106,7 +109,7 @@ impl Duration {
         Self::from_secs(mins.checked_mul(SECS_PER_MIN).expect("duration overflow"))
     }
 
-    /// Creates a `Duration` from a number of hours.
+    /// Creates a `SignedDuration` from a number of hours.
     ///
     /// # Panics
     ///
@@ -115,7 +118,7 @@ impl Duration {
         Self::from_secs(hours.checked_mul(SECS_PER_HOUR).expect("duration overflow"))
     }
 
-    /// Creates a `Duration` from a number of 24-hour days.
+    /// Creates a `SignedDuration` from a number of 24-hour days.
     ///
     /// # Panics
     ///
@@ -124,7 +127,7 @@ impl Duration {
         Self::from_secs(days.checked_mul(SECS_PER_DAY).expect("duration overflow"))
     }
 
-    /// Creates a `Duration` from a floating-point number of seconds.
+    /// Creates a `SignedDuration` from a floating-point number of seconds.
     ///
     /// # Panics
     ///
@@ -133,10 +136,10 @@ impl Duration {
         Self::try_from_secs_f64(secs).expect("invalid or out-of-range f64 duration")
     }
 
-    /// Fallibly creates a `Duration` from a floating-point number of seconds.
+    /// Fallibly creates a `SignedDuration` from a floating-point number of seconds.
     ///
     /// Returns [`TimeError::OutOfRange`] if `secs` is NaN or infinite, or
-    /// [`TimeError::Overflow`] if the result exceeds [`Duration::MIN`]..=[`Duration::MAX`].
+    /// [`TimeError::Overflow`] if the result exceeds [`SignedDuration::MIN`]..=[`SignedDuration::MAX`].
     pub fn try_from_secs_f64(secs: f64) -> Result<Self, TimeError> {
         if !secs.is_finite() {
             return Err(TimeError::OutOfRange);
@@ -201,7 +204,7 @@ impl Duration {
     ///
     /// # Panics
     ///
-    /// Panics if `self` is [`Duration::MIN`] (whose negation overflows `i64`).
+    /// Panics if `self` is [`SignedDuration::MIN`] (whose negation overflows `i64`).
     pub fn abs(&self) -> Self {
         self.checked_abs().expect("duration abs overflow")
     }
@@ -262,15 +265,15 @@ impl Duration {
     /// # Examples
     ///
     /// ```
-    /// use akku::time::Duration;
+    /// use akku::time::SignedDuration;
     ///
     /// assert_eq!(
-    ///     Duration::parse_human("1h30m500ms").unwrap(),
-    ///     Duration::from_millis(5_400_500)
+    ///     SignedDuration::parse_human("1h30m500ms").unwrap(),
+    ///     SignedDuration::from_millis(5_400_500)
     /// );
     /// assert_eq!(
-    ///     Duration::parse_human("-250ms").unwrap(),
-    ///     Duration::from_millis(-250)
+    ///     SignedDuration::parse_human("-250ms").unwrap(),
+    ///     SignedDuration::from_millis(-250)
     /// );
     /// ```
     pub fn parse_human(input: &str) -> Result<Self, ParseError> {
@@ -393,7 +396,7 @@ impl Duration {
     }
 }
 
-impl Add for Duration {
+impl Add for SignedDuration {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
@@ -401,13 +404,13 @@ impl Add for Duration {
     }
 }
 
-impl AddAssign for Duration {
+impl AddAssign for SignedDuration {
     fn add_assign(&mut self, rhs: Self) {
         *self = *self + rhs;
     }
 }
 
-impl Sub for Duration {
+impl Sub for SignedDuration {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
@@ -416,13 +419,13 @@ impl Sub for Duration {
     }
 }
 
-impl SubAssign for Duration {
+impl SubAssign for SignedDuration {
     fn sub_assign(&mut self, rhs: Self) {
         *self = *self - rhs;
     }
 }
 
-impl Neg for Duration {
+impl Neg for SignedDuration {
     type Output = Self;
 
     fn neg(self) -> Self::Output {
@@ -430,7 +433,7 @@ impl Neg for Duration {
     }
 }
 
-impl Mul<i32> for Duration {
+impl Mul<i32> for SignedDuration {
     type Output = Self;
 
     fn mul(self, rhs: i32) -> Self::Output {
@@ -439,22 +442,22 @@ impl Mul<i32> for Duration {
     }
 }
 
-impl Mul<Duration> for i32 {
-    type Output = Duration;
+impl Mul<SignedDuration> for i32 {
+    type Output = SignedDuration;
 
-    fn mul(self, rhs: Duration) -> Self::Output {
+    fn mul(self, rhs: SignedDuration) -> Self::Output {
         rhs.checked_mul(self)
             .expect("duration multiplication overflow")
     }
 }
 
-impl MulAssign<i32> for Duration {
+impl MulAssign<i32> for SignedDuration {
     fn mul_assign(&mut self, rhs: i32) {
         *self = *self * rhs;
     }
 }
 
-impl Div<i32> for Duration {
+impl Div<i32> for SignedDuration {
     type Output = Self;
 
     fn div(self, rhs: i32) -> Self::Output {
@@ -463,13 +466,13 @@ impl Div<i32> for Duration {
     }
 }
 
-impl DivAssign<i32> for Duration {
+impl DivAssign<i32> for SignedDuration {
     fn div_assign(&mut self, rhs: i32) {
         *self = *self / rhs;
     }
 }
 
-impl TryFrom<std::time::Duration> for Duration {
+impl TryFrom<std::time::Duration> for SignedDuration {
     type Error = TimeError;
 
     fn try_from(value: std::time::Duration) -> Result<Self, Self::Error> {
@@ -479,10 +482,10 @@ impl TryFrom<std::time::Duration> for Duration {
     }
 }
 
-impl TryFrom<Duration> for std::time::Duration {
+impl TryFrom<SignedDuration> for std::time::Duration {
     type Error = TimeError;
 
-    fn try_from(value: Duration) -> Result<Self, Self::Error> {
+    fn try_from(value: SignedDuration) -> Result<Self, Self::Error> {
         if value.is_negative() {
             return Err(TimeError::NegativeDuration);
         }
@@ -490,7 +493,7 @@ impl TryFrom<Duration> for std::time::Duration {
     }
 }
 
-impl fmt::Display for Duration {
+impl fmt::Display for SignedDuration {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_zero() {
             return f.write_str("0s");
@@ -521,7 +524,7 @@ impl fmt::Display for Duration {
     }
 }
 
-impl FromStr for Duration {
+impl FromStr for SignedDuration {
     type Err = ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {

@@ -506,18 +506,42 @@ fn fs_reexports_are_usable() {
     let canonical = akku::fs::canonicalize(dir.as_path()).unwrap();
     assert_eq!(canonical, akku::fs::canonicalize(&canonical).unwrap());
     assert!(akku::fs::try_exists(dir.as_path()).unwrap());
+    assert!(akku::fs::exists(dir.as_path()).unwrap());
+    assert!(!akku::fs::exists(dir.as_path().join("does-not-exist")).unwrap());
 
-    let mut file = akku::fs::File::create(dir.as_path().join("f.txt")).unwrap();
-    file.write_all(b"hi").unwrap();
+    // DirBuilder: non-recursive fails on missing parent, recursive succeeds.
+    let nested = dir.as_path().join("a/b/c");
     assert_eq!(
-        akku::fs::read_to_string(dir.as_path().join("f.txt")).unwrap(),
-        "hi"
+        akku::fs::DirBuilder::new()
+            .create(&nested)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::NotFound
     );
+    akku::fs::DirBuilder::new()
+        .recursive(true)
+        .create(&nested)
+        .unwrap();
+    assert!(akku::fs::exists(&nested).unwrap());
+
+    let file_path = dir.as_path().join("f.txt");
+    let mut file = akku::fs::File::create(&file_path).unwrap();
+    file.write_all(b"hi").unwrap();
+    let target_time = akku::time::UNIX_EPOCH + akku::time::Duration::from_secs(1_700_000_000);
+    let times = akku::fs::FileTimes::new().set_modified(target_time);
+    file.set_times(times).unwrap();
+    drop(file);
+    assert_eq!(
+        akku::fs::metadata(&file_path).unwrap().modified().unwrap(),
+        target_time
+    );
+
+    assert_eq!(akku::fs::read_to_string(&file_path).unwrap(), "hi");
     let listed: Vec<PathBuf> = akku::fs::read_dir(dir.as_path())
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .collect();
-    assert!(listed.contains(&dir.as_path().join("f.txt")));
+    assert!(listed.contains(&file_path));
 }
 
 #[test]

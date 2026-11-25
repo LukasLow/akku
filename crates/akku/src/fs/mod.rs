@@ -42,11 +42,13 @@ pub use walk::{walk, Walk, WalkBuilder, WalkEntry, WalkError};
 
 // Non-deprecated std::fs and std::io surface, re-exported on purpose.
 pub use std::fs::{
-    canonicalize, copy, create_dir, create_dir_all, hard_link, metadata, read, read_dir, read_link,
-    read_to_string, remove_dir, remove_dir_all, remove_file, rename, set_permissions,
+    canonicalize, copy, create_dir, create_dir_all, exists, hard_link, metadata, read, read_dir,
+    read_link, read_to_string, remove_dir, remove_dir_all, remove_file, rename, set_permissions,
     symlink_metadata, write,
 };
-pub use std::fs::{DirEntry, File, FileType, Metadata, OpenOptions, Permissions, ReadDir};
+pub use std::fs::{
+    DirBuilder, DirEntry, File, FileTimes, FileType, Metadata, OpenOptions, Permissions, ReadDir,
+};
 pub use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 
 /// Upper bound on write-atomic temp-file attempts before giving up.

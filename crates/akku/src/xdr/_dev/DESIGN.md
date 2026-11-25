@@ -192,13 +192,15 @@ pub enum Error {
     DepthLimit { offset: usize, limit: usize },
     /// Byte-length calculation overflowed `usize` (e.g., on 32-bit / `wasm32` targets).
     LengthOverflow { offset: usize, len: usize },
+    /// A non-empty array element consumed or produced zero wire bytes (RFC 4506 §6.3; G5 audit).
+    ZeroSizedElement { offset: usize },
 }
 // Implements `fmt::Display` and `std::error::Error`.
 ```
 
 ### Encoder (`Encoder<'a>`)
 
-Writes big-endian, 4-byte-aligned XDR into a caller-owned `Vec<u8>`. Every write checks `Limits::max_total_bytes` before growing the buffer; on any error, `encode_into` and `nest` truncate the buffer back to `start_len` so no partial bytes remain (see Decisions §4).
+Writes big-endian, 4-byte-aligned XDR into a caller-owned `Vec<u8>`. Every write checks `Limits::max_total_bytes` before growing the buffer; on any error, `encode_into`/`encode_with` leave the buffer at `start_len`, while `nest` and `Encoder::encode` roll back to their own entry checkpoint, so no partial bytes remain (see Decisions §4).
 
 ```rust
 pub struct Encoder<'a> { /* &'a mut Vec<u8>, start_len, limits, depth */ }
@@ -270,10 +272,10 @@ impl<'a> Encoder<'a> {
 
 ### Decoder (`Decoder<'a>`)
 
-Strictly decodes XDR from `&'a [u8]` (internally backed by `akku::bytes::Cursor<'a>`). Rejects non-zero padding, bools outside `0`/`1`, invalid UTF-8 in strings, and any limit violation.
+Strictly decodes XDR from `&'a [u8]` (internally an input slice plus a byte position). Rejects non-zero padding, bools outside `0`/`1`, invalid UTF-8 in strings, and any limit violation.
 
 ```rust
-pub struct Decoder<'a> { /* akku::bytes::Cursor<'a>, limits, depth */ }
+pub struct Decoder<'a> { /* input: &'a [u8], pos, limits, depth */ }
 
 impl<'a> Decoder<'a> {
     pub fn new(input: &'a [u8]) -> Self;
@@ -458,7 +460,7 @@ Covering every applicable class in `akku-tdd` and `akku-security-audit`:
    - Truncation at every byte offset `0..encoded.len()` of a representative composite message (NFSv3-shaped struct with opaque, string, array, union, option).
    - Wire lengths `0`, `1`, `u32::MAX - 3`, `u32::MAX - 2`, `u32::MAX - 1`, `u32::MAX` for opaque, string, and array (must return `LengthLimit` or `LengthOverflow` immediately — never wrap, panic, or allocate).
    - `padded_len(usize::MAX)`, `padded_len(usize::MAX - 1)`, `padded_len(usize::MAX - 2)`, `padded_len(usize::MAX - 3)`.
-   - `encode_opaque_bounded` / `encode_str_bounded` / `encode_array` at `len == max` (pass) and `len == max + 1` (fail with `LengthLimit`, buffer truncated back to `start_len`).
+   - `encode_opaque_bounded` / `encode_str_bounded` / `encode_array` at `len == max` (pass) and `len == max + 1` (fail with `LengthLimit`, nothing appended; earlier writes preserved).
 2. **Strict malformed rejection:**
    - Non-zero padding in **every** padding byte position (1st, 2nd, 3rd pad byte for lengths `1`, `2`, `3`, `5`, `6`, `7`) for fixed opaque, variable opaque, and string -> `Error::NonZeroPadding { offset, byte }` with exact offset and byte.
    - Invalid booleans (`2`, `-1`, `i32::MIN`, `i32::MAX`, `0x0100_0000`) in `decode_bool`, `decode_option`, and `decode_list` -> `Error::InvalidBool`.
@@ -480,7 +482,7 @@ Covering every applicable class in `akku-tdd` and `akku-security-audit`:
    - NFSv3-shaped composite round-trip: `fhandle3` (`opaque<64>`), `cookieverf3` (`opaque[8]`), `fattr3` (enums + `u32` + `u64`), `READDIR3resok` (`decode_list` of `entry3`), and `nfsstat3` discriminated union (`NFS3_OK = 0` vs `NFS3ERR_JUKEBOX = 10008`).
    - Edge values: `i32::{MIN, -1, 0, 1, MAX}`, `u32::{0, MAX}`, `i64::{MIN, MAX}`, `u64::{0, MAX}`, `f32`/`f64` `(-0.0, +0.0, ±inf, MIN_POSITIVE, subnormal, NaN bit-pattern round-trip)`, strings with embedded `\0`, CRLF, and multi-byte UTF-8.
 5. **Buffer reuse & offset tracking:**
-   - Encoding into a non-empty `Vec<u8>` (e.g., 4-byte RPC record header already present) preserves the prefix, reports `written()` relative to start, counts `max_total_bytes` against bytes written by this `Encoder`, and truncates back to `start_len` (preserving the prefix) on any `encode_into` / `nest` error.
+   - Encoding into a non-empty `Vec<u8>` (e.g., 4-byte RPC record header already present) preserves the prefix, reports `written()` relative to start, counts `max_total_bytes` against bytes written by this `Encoder`, and on error leaves the buffer at `start_len` for `encode_into`, or at the entry checkpoint for `nest` / `Encoder::encode` (always preserving the prefix).
 
 ## Decisions (human, 2026-11-25)
 
@@ -489,7 +491,7 @@ The former open questions were resolved at G1:
 1. **Strings:** `decode_str`/`decode_string` validate UTF-8 (superset of RFC 4506 ASCII). Raw bytes (NFSv3 filenames) go through `decode_opaque`. A strict ASCII helper stays a TODO item, not v1.
 2. **Trait names:** `XdrEncode` / `XdrDecode`.
 3. **Decode style:** owned `XdrDecode: Sized`; zero-copy borrows stay on `Decoder<'a>` (`decode_opaque_slice`, `decode_str`).
-4. **Partial writes:** on any `Encoder` error, `encode_into` / `nest` truncate the output back to `start_len`; no half-written records are left behind.
+4. **Partial writes:** on any `Encoder` error, `encode_into` / `nest` truncate the output back to `start_len`; no half-written records are left behind. Clarified at G5: top-level `encode_into` / `encode_with` / `Encoder::encode` roll back to `start_len` and `nest` rolls back to its own entry checkpoint (on error or panic), while a failing primitive or bounded-field write appends nothing and keeps earlier writes in the same `Encoder`.
 5. **Default `Limits`:** `max_opaque_len = 16 MiB`, `max_array_len = 65_536`, `max_total_bytes = 64 MiB`, `max_depth = 64`.
 6. **Macros:** none in v1; `xdr_struct!` / `xdr_enum!` come after `akku::nfs` has exercised the manual API.
 7. **Discriminants:** `InvalidDiscriminant { value: i32 }` (XDR enums are signed 32-bit per RFC 4506 §4.3); unsigned discriminants are reported by bit pattern.

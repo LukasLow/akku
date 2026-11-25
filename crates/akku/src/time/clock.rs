@@ -3,87 +3,111 @@
 use std::sync::{Arc, Mutex};
 
 use super::datetime::OffsetDateTime;
-use super::duration::Duration;
+use super::duration::SignedDuration;
+use super::TimeError;
 
-/// An opaque monotonic timestamp produced by a [`Clock`].
+/// An opaque monotonic timestamp produced by an injectable [`Clock`].
 ///
-/// Instants obtained from the same clock source (for example, [`SystemClock`]
-/// or a [`MockClock`]) can be compared and subtracted via [`Instant::duration_since`]
-/// or measured against a clock via [`Instant::elapsed_from`].
+/// Unlike [`std::time::Instant`] (re-exported at [`crate::time::Instant`]), a
+/// `ClockInstant` can originate from either [`SystemClock`] or a deterministic
+/// [`MockClock`]. Instants obtained from the same clock source can be compared
+/// and subtracted via [`ClockInstant::duration_since`] or measured against a
+/// clock via [`ClockInstant::elapsed_from`].
+///
+/// System-backed values convert freely from [`std::time::Instant`] via [`From`]
+/// and fallibly back via [`TryFrom`] (returning [`TimeError::MockInstant`] for
+/// mock readings).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Instant {
-    inner: InstantInner,
+pub struct ClockInstant {
+    inner: ClockInstantInner,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-enum InstantInner {
+enum ClockInstantInner {
     System(std::time::Instant),
     Mock(i128),
 }
 
-impl Instant {
+impl ClockInstant {
     pub(crate) const fn from_system(instant: std::time::Instant) -> Self {
         Self {
-            inner: InstantInner::System(instant),
+            inner: ClockInstantInner::System(instant),
         }
     }
 
     pub(crate) const fn from_mock_nanos(nanos: i128) -> Self {
         Self {
-            inner: InstantInner::Mock(nanos),
+            inner: ClockInstantInner::Mock(nanos),
         }
     }
 
-    /// Returns the signed [`Duration`] elapsed from `earlier` to `self`.
+    /// Returns the signed [`SignedDuration`] elapsed from `earlier` to `self`.
     ///
     /// # Panics
     ///
     /// Panics if `self` and `earlier` originate from incompatible clock sources
     /// (for example, one from [`SystemClock`] and one from [`MockClock`]), or
-    /// if the difference overflows [`Duration`].
-    pub fn duration_since(&self, earlier: Self) -> Duration {
+    /// if the difference overflows [`SignedDuration`].
+    pub fn duration_since(&self, earlier: Self) -> SignedDuration {
         self.checked_duration_since(earlier)
             .expect("cannot compute duration between incompatible or overflowing instants")
     }
 
-    /// Fallibly returns the signed [`Duration`] elapsed from `earlier` to `self`.
+    /// Fallibly returns the signed [`SignedDuration`] elapsed from `earlier` to `self`.
     ///
     /// Returns `None` if `self` and `earlier` originate from different clock
     /// kinds or if the resulting duration overflows.
-    pub fn checked_duration_since(&self, earlier: Self) -> Option<Duration> {
+    pub fn checked_duration_since(&self, earlier: Self) -> Option<SignedDuration> {
         match (self.inner, earlier.inner) {
-            (InstantInner::System(a), InstantInner::System(b)) => {
+            (ClockInstantInner::System(a), ClockInstantInner::System(b)) => {
                 if a >= b {
-                    Duration::try_from(a.duration_since(b)).ok()
+                    SignedDuration::try_from(a.duration_since(b)).ok()
                 } else {
-                    Duration::try_from(b.duration_since(a))
+                    SignedDuration::try_from(b.duration_since(a))
                         .ok()
-                        .and_then(Duration::checked_neg)
+                        .and_then(SignedDuration::checked_neg)
                 }
             }
-            (InstantInner::Mock(a), InstantInner::Mock(b)) => {
-                a.checked_sub(b).and_then(Duration::from_total_nanos)
+            (ClockInstantInner::Mock(a), ClockInstantInner::Mock(b)) => {
+                a.checked_sub(b).and_then(SignedDuration::from_total_nanos)
             }
             _ => None,
         }
     }
 
-    /// Returns the [`Duration`] elapsed between `self` and the current
+    /// Returns the [`SignedDuration`] elapsed between `self` and the current
     /// monotonic reading of `clock`.
     ///
     /// # Examples
     ///
     /// ```
-    /// use akku::time::{Clock, Duration, MockClock, OffsetDateTime};
+    /// use akku::time::{Clock, MockClock, OffsetDateTime, SignedDuration};
     ///
     /// let start = OffsetDateTime::from_unix_timestamp(1_700_000_000, 0).unwrap();
     /// let clock = MockClock::new(start);
     /// let t0 = clock.monotonic();
-    /// clock.advance(Duration::from_millis(250));
-    /// assert_eq!(t0.elapsed_from(&clock), Duration::from_millis(250));
+    /// clock.advance(SignedDuration::from_millis(250));
+    /// assert_eq!(t0.elapsed_from(&clock), SignedDuration::from_millis(250));
     /// ```
-    pub fn elapsed_from<C: Clock + ?Sized>(&self, clock: &C) -> Duration {
+    pub fn elapsed_from<C: Clock + ?Sized>(&self, clock: &C) -> SignedDuration {
         clock.monotonic().duration_since(*self)
+    }
+}
+
+impl From<std::time::Instant> for ClockInstant {
+    fn from(instant: std::time::Instant) -> Self {
+        Self::from_system(instant)
+    }
+}
+
+impl TryFrom<ClockInstant> for std::time::Instant {
+    type Error = TimeError;
+
+    fn try_from(value: ClockInstant) -> Result<Self, Self::Error> {
+        match value.inner {
+            ClockInstantInner::System(instant) => Ok(instant),
+            ClockInstantInner::Mock(_) => Err(TimeError::MockInstant),
+        }
     }
 }
 
@@ -95,8 +119,8 @@ pub trait Clock: Send + Sync {
     /// Returns the current wall-clock timestamp.
     fn now(&self) -> OffsetDateTime;
 
-    /// Returns a monotonic [`Instant`] suitable for measuring elapsed durations.
-    fn monotonic(&self) -> Instant;
+    /// Returns a monotonic [`ClockInstant`] suitable for measuring elapsed durations.
+    fn monotonic(&self) -> ClockInstant;
 }
 
 /// The real operating-system clock backed by [`std::time::SystemTime`] and
@@ -116,8 +140,8 @@ impl Clock for SystemClock {
         OffsetDateTime::now_utc()
     }
 
-    fn monotonic(&self) -> Instant {
-        Instant::from_system(std::time::Instant::now())
+    fn monotonic(&self) -> ClockInstant {
+        ClockInstant::from_system(std::time::Instant::now())
     }
 }
 
@@ -134,11 +158,11 @@ struct MockClockState {
 /// # Examples
 ///
 /// ```
-/// use akku::time::{Clock, Duration, MockClock, OffsetDateTime};
+/// use akku::time::{Clock, MockClock, OffsetDateTime, SignedDuration};
 ///
 /// let start: OffsetDateTime = "2024-01-01T00:00:00Z".parse().unwrap();
 /// let clock = MockClock::new(start);
-/// clock.advance(Duration::from_secs(60));
+/// clock.advance(SignedDuration::from_secs(60));
 /// assert_eq!(clock.now().format_rfc3339(), "2024-01-01T00:01:00Z");
 /// ```
 #[derive(Debug, Clone)]
@@ -166,7 +190,7 @@ impl MockClock {
     /// # Panics
     ///
     /// Panics if advancing the wall clock or monotonic counter overflows.
-    pub fn advance(&self, delta: Duration) {
+    pub fn advance(&self, delta: SignedDuration) {
         let mut guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
         guard.wall = guard
             .wall
@@ -193,8 +217,8 @@ impl Clock for MockClock {
         guard.wall
     }
 
-    fn monotonic(&self) -> Instant {
+    fn monotonic(&self) -> ClockInstant {
         let guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        Instant::from_mock_nanos(guard.monotonic_nanos)
+        ClockInstant::from_mock_nanos(guard.monotonic_nanos)
     }
 }

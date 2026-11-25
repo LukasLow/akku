@@ -1,0 +1,7 @@
+name = "xdr"
+status = "native"
+wasm32 = true
+wave = 2
+summary = "Strict big-endian XDR (RFC 4506 / STD 67) binary encoding and decoding with DoS limits."
+owners = ["LukasLow"]
+tags = ["xdr", "encoding", "binary", "rpc", "rfc4506"]

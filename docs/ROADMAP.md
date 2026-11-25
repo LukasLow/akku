@@ -102,7 +102,7 @@ Goal: production web backends, data pipelines, and WASM-ready clients.
 - [x] `cache` (`native`) — in-memory LRU/TTL cache
 - [ ] `task` & `sync` (`adapter → native`, + `wasm32` spawn) — async tasks, channels, semaphore, `schedule`
 - [ ] `net`, `dns`, `quic` (`native` / `adapter`) — flat modules: `net` (`std::net` superset: IP, TCP/UDP/Unix sockets, async), `dns`, `quic`
-- [ ] `xdr`, `vfs`, `nfs` (megaghost-driven) — `xdr` (XDR, RFC 4506), `vfs` (virtual filesystem trait layer), `nfs` (`server`/`client` over `vfs`; ONC-RPC internal; read-only `server` first)
+- [ ] `xdr`, `vfs`, `nfs` (megaghost-driven) — `xdr` (XDR, RFC 4506; shipped in PR #18), `vfs` (virtual filesystem trait layer), `nfs` (`server`/`client` over `vfs`; ONC-RPC internal; read-only `server` first)
 
 ---
 

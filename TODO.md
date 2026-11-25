@@ -1,6 +1,6 @@
 # TODO.md — akku
 
-> **Current Snapshot:** **37 implemented modules** (+ `akku::diff` re-export = **38 / 87** entries from [`Namespace.md`](Namespace.md), **~84,400 LOC** pure Rust, `#![deny(unsafe_code)]` (sys-only allowlist), `#![deny(missing_docs)]`).
+> **Current Snapshot:** **38 implemented modules** (+ `akku::diff` re-export = **39 / 87** entries from [`Namespace.md`](Namespace.md), **~84,400 LOC** pure Rust, `#![deny(unsafe_code)]` (sys-only allowlist), `#![deny(missing_docs)]`).
 >
 > - **Wave 1:** 25 / 25 implemented (24 native zero-dep + `http` adapter)
 > - **Wave 2:** 11 / 17 implemented (`ws`, `sse`, `template`, `markdown`, `xml`, `yaml`, `text`+`diff`, `regex`, `archive`, `kv`, `cache`) — **Audit Bugfix Pass ✅ done (2026-11-24)**
@@ -61,7 +61,7 @@
 - [ ] Migration PRs batch-wise until all modules are on the same level.
 
 ### 0.9 megaghost-driven libs (after 0.2–0.4)
-- [ ] `net` and `xdr` (parallel) → `vfs` → `nfs::server` (read-only first).
+- [ ] `net` and `xdr` (parallel) → `vfs` → `nfs::server` (read-only first). `xdr` done (PR #18).
 
 ### 0.10 Shipped-module gaps (from the Go stdlib gap doc, PR #10)
 > Shipped modules that miss an API their docs, Namespace, or Go equivalent imply. Each is a BugFix or a small NewLib-style extension of the existing module.

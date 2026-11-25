@@ -1,0 +1,3 @@
+kind: Added
+body: Add `akku::xdr`, a zero-dependency XDR (RFC 4506) encoder and decoder with DoS limits, strict padding and bool checks, and rollback on encode errors.
+time: 2026-11-25T00:00:00Z

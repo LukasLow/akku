@@ -2,11 +2,14 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::thread;
 
-use akku::time::clock::{Clock, Instant, MockClock, SystemClock};
+use akku::time::clock::{Clock, ClockInstant, MockClock, SystemClock};
 use akku::time::datetime::{Date, DateTime, OffsetDateTime, Time, Weekday};
-use akku::time::duration::Duration;
+use akku::time::duration::SignedDuration;
 use akku::time::timezone::{TimeZone, UtcOffset};
-use akku::time::{ParseError, TimeError};
+use akku::time::{
+    Duration, Instant, ParseError, SystemTime, SystemTimeError, TimeError, TryFromFloatSecsError,
+    UNIX_EPOCH,
+};
 
 #[test]
 fn leap_years_and_days_in_month() {
@@ -106,12 +109,12 @@ fn pre_1970_negative_timestamps_floor_division() {
 
     let epoch = OffsetDateTime::from_unix_timestamp(0, 0).unwrap();
     assert_eq!(
-        epoch.checked_add(Duration::from_millis(-500)),
+        epoch.checked_add(SignedDuration::from_millis(-500)),
         Some(half_sec_before)
     );
     assert_eq!(
         epoch.duration_since(half_sec_before),
-        Duration::from_millis(500)
+        SignedDuration::from_millis(500)
     );
 
     // 1900-01-01T00:00:00Z -> -2_208_988_800
@@ -221,9 +224,15 @@ fn offset_datetime_utc_based_eq_ord_and_hash() {
 
     assert!(cest < later_utc);
     assert!(later_utc > edt);
-    assert_eq!(cest.duration_since(edt), Duration::ZERO);
-    assert_eq!(later_utc.duration_since(edt), Duration::from_millis(1));
-    assert_eq!(edt.duration_since(later_utc), Duration::from_millis(-1));
+    assert_eq!(cest.duration_since(edt), SignedDuration::ZERO);
+    assert_eq!(
+        later_utc.duration_since(edt),
+        SignedDuration::from_millis(1)
+    );
+    assert_eq!(
+        edt.duration_since(later_utc),
+        SignedDuration::from_millis(-1)
+    );
 
     // Verify Hash consistency with Eq across different offsets.
     let hash_of = |dt: OffsetDateTime| {
@@ -298,87 +307,96 @@ fn timezone_and_utc_offset_parsing() {
 #[test]
 fn duration_signed_arithmetic_overflow_and_human_format() {
     // Normalization & signed operations.
-    let d1 = Duration::from_millis(1500);
+    let d1 = SignedDuration::from_millis(1500);
     assert_eq!(d1.as_secs(), 1);
     assert_eq!(d1.subsec_nanos(), 500_000_000);
     assert_eq!(d1.as_millis(), 1500);
     assert_eq!(d1.as_nanos(), 1_500_000_000);
 
-    let d2 = Duration::from_secs(2);
+    let d2 = SignedDuration::from_secs(2);
     let diff = d1 - d2;
     assert!(diff.is_negative());
     assert_eq!(diff.as_secs(), 0);
     assert_eq!(diff.subsec_nanos(), -500_000_000);
-    assert_eq!(diff.abs(), Duration::from_millis(500));
-    assert_eq!(-diff, Duration::from_millis(500));
-    assert_eq!(diff * 3, Duration::from_millis(-1500));
-    assert_eq!(3 * diff, Duration::from_millis(-1500));
+    assert_eq!(diff.abs(), SignedDuration::from_millis(500));
+    assert_eq!(-diff, SignedDuration::from_millis(500));
+    assert_eq!(diff * 3, SignedDuration::from_millis(-1500));
+    assert_eq!(3 * diff, SignedDuration::from_millis(-1500));
     assert_eq!(
-        Duration::from_millis(-1500) / 3,
-        Duration::from_millis(-500)
+        SignedDuration::from_millis(-1500) / 3,
+        SignedDuration::from_millis(-500)
     );
-    assert_eq!(Duration::from_secs_f64(-1.5), Duration::from_millis(-1500));
-    assert!((Duration::from_millis(-1500).as_secs_f64() - (-1.5)).abs() < 1e-12);
+    assert_eq!(
+        SignedDuration::from_secs_f64(-1.5),
+        SignedDuration::from_millis(-1500)
+    );
+    assert!((SignedDuration::from_millis(-1500).as_secs_f64() - (-1.5)).abs() < 1e-12);
 
     // Checked overflow behavior.
-    assert_eq!(Duration::MAX.checked_add(Duration::from_nanos(1)), None);
-    assert_eq!(Duration::MIN.checked_sub(Duration::from_nanos(1)), None);
-    assert_eq!(Duration::MAX.checked_mul(2), None);
-    assert_eq!(Duration::from_secs(10).checked_div(0), None);
-    assert_eq!(Duration::MIN.checked_neg(), None);
+    assert_eq!(
+        SignedDuration::MAX.checked_add(SignedDuration::from_nanos(1)),
+        None
+    );
+    assert_eq!(
+        SignedDuration::MIN.checked_sub(SignedDuration::from_nanos(1)),
+        None
+    );
+    assert_eq!(SignedDuration::MAX.checked_mul(2), None);
+    assert_eq!(SignedDuration::from_secs(10).checked_div(0), None);
+    assert_eq!(SignedDuration::MIN.checked_neg(), None);
 
     // std::time::Duration conversions.
-    let std_dur = std::time::Duration::new(42, 123_456_789);
-    let akku_dur = Duration::try_from(std_dur).unwrap();
-    assert_eq!(std::time::Duration::try_from(akku_dur).unwrap(), std_dur);
+    let std_dur = Duration::new(42, 123_456_789);
+    let akku_dur = SignedDuration::try_from(std_dur).unwrap();
+    assert_eq!(Duration::try_from(akku_dur).unwrap(), std_dur);
     assert_eq!(
-        std::time::Duration::try_from(Duration::from_nanos(-1)),
+        Duration::try_from(SignedDuration::from_nanos(-1)),
         Err(TimeError::NegativeDuration)
     );
     assert_eq!(
-        Duration::try_from(std::time::Duration::new(u64::MAX, 0)),
+        SignedDuration::try_from(Duration::new(u64::MAX, 0)),
         Err(TimeError::Overflow)
     );
 
     // Human parse and Display round-trips.
-    assert_eq!(Duration::ZERO.to_string(), "0s");
-    assert_eq!(Duration::from_mins(90).to_string(), "1h30m");
-    assert_eq!(Duration::from_millis(500).to_string(), "500ms");
-    assert_eq!(Duration::from_secs(-2).to_string(), "-2s");
+    assert_eq!(SignedDuration::ZERO.to_string(), "0s");
+    assert_eq!(SignedDuration::from_mins(90).to_string(), "1h30m");
+    assert_eq!(SignedDuration::from_millis(500).to_string(), "500ms");
+    assert_eq!(SignedDuration::from_secs(-2).to_string(), "-2s");
 
-    let parsed = Duration::parse_human("1h30m500ms").unwrap();
-    assert_eq!(parsed, Duration::from_millis(5_400_500));
+    let parsed = SignedDuration::parse_human("1h30m500ms").unwrap();
+    assert_eq!(parsed, SignedDuration::from_millis(5_400_500));
     assert_eq!(parsed.to_string(), "1h30m500ms");
 
-    let neg: Duration = "-250ms".parse().unwrap();
-    assert_eq!(neg, Duration::from_millis(-250));
+    let neg: SignedDuration = "-250ms".parse().unwrap();
+    assert_eq!(neg, SignedDuration::from_millis(-250));
     assert_eq!(neg.to_string(), "-250ms");
 
     assert_eq!(
-        Duration::parse_human("100µs").unwrap(),
-        Duration::from_micros(100)
+        SignedDuration::parse_human("100µs").unwrap(),
+        SignedDuration::from_micros(100)
     );
     assert_eq!(
-        Duration::parse_human("100us").unwrap(),
-        Duration::from_micros(100)
+        SignedDuration::parse_human("100us").unwrap(),
+        SignedDuration::from_micros(100)
     );
     assert_eq!(
-        Duration::parse_human("2d3h4m5s6ms7us8ns")
+        SignedDuration::parse_human("2d3h4m5s6ms7us8ns")
             .unwrap()
             .to_string(),
         "2d3h4m5s6ms7us8ns"
     );
     assert_eq!(
-        Duration::parse_human("1.5s").unwrap(),
-        Duration::from_millis(1500)
+        SignedDuration::parse_human("1.5s").unwrap(),
+        SignedDuration::from_millis(1500)
     );
 
-    assert_eq!(Duration::parse_human(""), Err(ParseError::Empty));
-    assert!(Duration::parse_human("-").is_err());
-    assert!(Duration::parse_human("123").is_err());
-    assert!(Duration::parse_human("10lightyears").is_err());
+    assert_eq!(SignedDuration::parse_human(""), Err(ParseError::Empty));
+    assert!(SignedDuration::parse_human("-").is_err());
+    assert!(SignedDuration::parse_human("123").is_err());
+    assert!(SignedDuration::parse_human("10lightyears").is_err());
     assert_eq!(
-        Duration::parse_human("999999999999999999999999d"),
+        SignedDuration::parse_human("999999999999999999999999d"),
         Err(ParseError::Overflow)
     );
 }
@@ -387,14 +405,14 @@ fn duration_signed_arithmetic_overflow_and_human_format() {
 fn mock_clock_advances_deterministically_across_threads() {
     let start: OffsetDateTime = "2024-01-01T00:00:00Z".parse().unwrap();
     let clock = MockClock::new(start);
-    let t0: Instant = clock.monotonic();
+    let t0: ClockInstant = clock.monotonic();
 
     let handles: Vec<_> = (0..8)
         .map(|_| {
             let c = clock.clone();
             thread::spawn(move || {
                 for _ in 0..100 {
-                    c.advance(Duration::from_millis(10));
+                    c.advance(SignedDuration::from_millis(10));
                 }
             })
         })
@@ -405,24 +423,24 @@ fn mock_clock_advances_deterministically_across_threads() {
     }
 
     // 8 threads * 100 iterations * 10ms = 8000ms = 8s exactly.
-    assert_eq!(t0.elapsed_from(&clock), Duration::from_secs(8));
+    assert_eq!(t0.elapsed_from(&clock), SignedDuration::from_secs(8));
     assert_eq!(clock.now().format_rfc3339(), "2024-01-01T00:00:08Z");
 
     // Wall-clock `set` changes `now()` without disturbing monotonic elapsed time.
     let jumped: OffsetDateTime = "2030-05-05T10:00:00Z".parse().unwrap();
     clock.set(jumped);
     assert_eq!(clock.now(), jumped);
-    assert_eq!(t0.elapsed_from(&clock), Duration::from_secs(8));
+    assert_eq!(t0.elapsed_from(&clock), SignedDuration::from_secs(8));
 
     // Verify trait object compatibility and SystemClock sanity.
     let dyn_clock: &dyn Clock = &clock;
-    assert_eq!(t0.elapsed_from(dyn_clock), Duration::from_secs(8));
+    assert_eq!(t0.elapsed_from(dyn_clock), SignedDuration::from_secs(8));
 
     let sys = SystemClock::new();
     let s0 = sys.monotonic();
     let now = sys.now();
     assert!(now.date().year() >= 2024);
-    assert!(s0.elapsed_from(&sys) >= Duration::ZERO);
+    assert!(s0.elapsed_from(&sys) >= SignedDuration::ZERO);
 
     // DateTime & Time parsing sanity.
     let t: Time = "14:05:09.005".parse().unwrap();
@@ -456,4 +474,148 @@ fn checked_to_offset_handles_year_extremes() {
         .unwrap();
     assert_eq!(shifted_west, max_instant);
     assert_eq!(shifted_west.date(), max_date);
+}
+
+#[test]
+fn std_time_reexports_are_identical_to_std() {
+    let d: std::time::Duration = Duration::from_secs(5);
+    assert_eq!(d, std::time::Duration::from_secs(5));
+
+    let i: std::time::Instant = Instant::now();
+    assert!(i.elapsed() >= std::time::Duration::ZERO);
+
+    let epoch: std::time::SystemTime = UNIX_EPOCH;
+    let now: std::time::SystemTime = SystemTime::now();
+    assert!(now.duration_since(epoch).is_ok());
+
+    let sys_err: SystemTimeError = epoch
+        .duration_since(epoch + Duration::from_secs(1))
+        .unwrap_err();
+    let std_sys_err: std::time::SystemTimeError = sys_err;
+    assert_eq!(std_sys_err.duration(), Duration::from_secs(1));
+
+    let float_err: TryFromFloatSecsError = Duration::try_from_secs_f64(-1.0).unwrap_err();
+    let _std_float_err: std::time::TryFromFloatSecsError = float_err;
+}
+
+#[test]
+fn signed_duration_std_conversion_boundaries_and_errors() {
+    // Zero round-trip.
+    assert_eq!(
+        SignedDuration::try_from(Duration::ZERO),
+        Ok(SignedDuration::ZERO)
+    );
+    assert_eq!(Duration::try_from(SignedDuration::ZERO), Ok(Duration::ZERO));
+
+    // Exact upper bound: (i64::MAX, 999_999_999).
+    let max_std = Duration::new(i64::MAX as u64, 999_999_999);
+    let max_signed = SignedDuration::try_from(max_std).unwrap();
+    assert_eq!(max_signed, SignedDuration::MAX);
+    assert_eq!(Duration::try_from(max_signed).unwrap(), max_std);
+
+    // One second past i64::MAX and Duration::MAX must overflow.
+    assert_eq!(
+        SignedDuration::try_from(Duration::new((i64::MAX as u64) + 1, 0)),
+        Err(TimeError::Overflow)
+    );
+    assert_eq!(
+        SignedDuration::try_from(Duration::MAX),
+        Err(TimeError::Overflow)
+    );
+
+    // Negative subsecond-only and extreme minimum must be rejected.
+    assert_eq!(
+        Duration::try_from(SignedDuration::from_nanos(-1)),
+        Err(TimeError::NegativeDuration)
+    );
+    assert_eq!(
+        Duration::try_from(SignedDuration::MIN),
+        Err(TimeError::NegativeDuration)
+    );
+}
+
+#[test]
+fn clock_instant_std_conversion_and_incompatible_clocks() {
+    let raw = Instant::now();
+    let wrapped = ClockInstant::from(raw);
+    assert_eq!(Instant::try_from(wrapped), Ok(raw));
+
+    let sys = SystemClock::new();
+    let s0 = sys.monotonic();
+    let s0_std = Instant::try_from(s0).expect("SystemClock instant converts to std::time::Instant");
+    assert!(s0_std >= raw);
+    assert!(wrapped.elapsed_from(&sys) >= SignedDuration::ZERO);
+    assert!(s0.duration_since(wrapped) >= SignedDuration::ZERO);
+    assert!(wrapped.duration_since(s0) <= SignedDuration::ZERO);
+
+    let mock = MockClock::new(OffsetDateTime::from_unix_timestamp(0, 0).unwrap());
+    let m0 = mock.monotonic();
+    let err = Instant::try_from(m0).unwrap_err();
+    assert_eq!(err, TimeError::MockInstant);
+    assert!(err.to_string().contains("ClockInstant"));
+
+    // Cross-clock subtraction returns None in both directions.
+    assert_eq!(s0.checked_duration_since(m0), None);
+    assert_eq!(m0.checked_duration_since(s0), None);
+
+    // Reverse subtraction on MockClock yields negative SignedDuration.
+    mock.advance(SignedDuration::from_millis(250));
+    let m1 = mock.monotonic();
+    assert_eq!(
+        m0.checked_duration_since(m1),
+        Some(SignedDuration::from_millis(-250))
+    );
+}
+
+#[test]
+fn offset_datetime_system_time_conversions_and_boundaries() {
+    // Unix epoch round-trip.
+    let epoch_dt = OffsetDateTime::try_from(UNIX_EPOCH).unwrap();
+    assert_eq!(epoch_dt, OffsetDateTime::from_unix_timestamp(0, 0).unwrap());
+    assert_eq!(SystemTime::try_from(epoch_dt).unwrap(), UNIX_EPOCH);
+
+    // Positive timestamp (100ns-aligned so Windows FILETIME preserves exact subseconds).
+    let post: OffsetDateTime = "2024-06-01T12:00:00.1234567Z".parse().unwrap();
+    let post_st = SystemTime::try_from(post).unwrap();
+    assert_eq!(OffsetDateTime::try_from(post_st).unwrap(), post);
+
+    // Non-UTC offset normalizes to the same UTC SystemTime.
+    let cest: OffsetDateTime = "2024-06-01T14:00:00.1234567+02:00".parse().unwrap();
+    assert_eq!(SystemTime::try_from(cest).unwrap(), post_st);
+
+    // Pre-1970 timestamps with zero and non-zero subseconds (floor-division boundary).
+    for iso in [
+        "1969-12-31T23:59:59Z",
+        "1969-12-31T23:59:59.5Z",
+        "1969-12-31T23:59:59.9999999Z",
+        "1900-01-01T00:00:00Z",
+    ] {
+        let dt: OffsetDateTime = iso.parse().unwrap();
+        let st = SystemTime::try_from(dt).unwrap();
+        assert_eq!(OffsetDateTime::try_from(st).unwrap(), dt, "for {iso}");
+    }
+
+    // Beyond OffsetDateTime's i32 year range: SystemTime -> OffsetDateTime must return OutOfRange.
+    if let Some(far_future) = UNIX_EPOCH.checked_add(Duration::from_secs(i64::MAX as u64)) {
+        assert_eq!(
+            OffsetDateTime::try_from(far_future),
+            Err(TimeError::OutOfRange)
+        );
+    }
+    if let Some(far_past) = UNIX_EPOCH.checked_sub(Duration::from_secs(i64::MAX as u64)) {
+        assert_eq!(
+            OffsetDateTime::try_from(far_past),
+            Err(TimeError::OutOfRange)
+        );
+    }
+
+    // Extreme OffsetDateTime -> SystemTime either succeeds losslessly or returns OutOfRange (never panics).
+    let min_dt = OffsetDateTime::new(
+        DateTime::new(Date::new(i32::MIN, 1, 1).unwrap(), Time::MIDNIGHT),
+        UtcOffset::UTC,
+    );
+    match SystemTime::try_from(min_dt) {
+        Ok(st) => assert_eq!(OffsetDateTime::try_from(st).unwrap(), min_dt),
+        Err(err) => assert_eq!(err, TimeError::OutOfRange),
+    }
 }

@@ -5,20 +5,20 @@ use std::fmt;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use crate::time::{Clock, Duration as AkkuDuration, Instant, SystemClock};
+use crate::time::{Clock, ClockInstant, SignedDuration, SystemClock};
 
 use super::{BatchOp, KvLimits, KvResult, KvStore};
 
 #[derive(Debug, Clone)]
 struct MemoryEntry {
     value: Vec<u8>,
-    expiry: Option<(Instant, AkkuDuration)>,
+    expiry: Option<(ClockInstant, SignedDuration)>,
 }
 
 impl MemoryEntry {
-    fn is_expired(&self, now: Instant) -> bool {
+    fn is_expired(&self, now: ClockInstant) -> bool {
         if let Some((inserted_at, ttl)) = self.expiry {
-            if ttl <= AkkuDuration::ZERO {
+            if ttl <= SignedDuration::ZERO {
                 return true;
             }
             if let Some(elapsed) = now.checked_duration_since(inserted_at) {
@@ -129,8 +129,8 @@ impl MemoryStore {
     }
 }
 
-fn std_to_akku_duration(d: Duration) -> AkkuDuration {
-    AkkuDuration::try_from(d).unwrap_or(AkkuDuration::MAX)
+fn std_to_akku_duration(d: Duration) -> SignedDuration {
+    SignedDuration::try_from(d).unwrap_or(SignedDuration::MAX)
 }
 
 impl KvStore for MemoryStore {
