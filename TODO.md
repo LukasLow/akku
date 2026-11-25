@@ -48,7 +48,7 @@
 - [x] macOS + Windows required (2026-11-24); `wasm32` optional by design (branch protection requires `test`, `os-test (macos-latest)`, `os-test (windows-latest)`).
 - [ ] Windows portability (in progress): get `os-test (windows-latest)` green.
 - [x] `ci.yml`: add `types: [opened, synchronize, reopened, labeled, unlabeled]` to `pull_request`, so adding `skip-changelog` re-runs the changelog check.
-- [ ] MSRV: `rust-toolchain.toml` says `channel = "stable"`, so smd and CI use the latest stable, not Rust 1.85. Decide: add an MSRV 1.85 CI job, or pin the toolchain.
+- [x] MSRV (2026-11-25): decided **stable + MSRV 1.85 CI job**. `rust-toolchain.toml` stays on `channel = "stable"`, all published crates inherit `rust-version = "1.85"`, and the optional `msrv` job in `ci.yml` runs `cargo check --workspace --all-features --all-targets --locked` on Rust 1.85.0.
 
 ### 0.7 OS layer (design first, as an RFC PR)
 - [ ] RFC: platform modules `akku::os::{unix, linux, macos, ios, android, windows}` (superset of `std::os`, cfg-gated); unified APIs stay flat domain modules (`clipboard`, `notify`, `secret`, `power`, …; media capture via `audio::device` / `vid::device`); errors `Unsupported` / `NotAvailable` / `PermissionDenied`; a per-platform support matrix in `meta.toml` → catalog/capabilities.
