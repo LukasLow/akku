@@ -59,7 +59,7 @@
 //!
 //! Copying between async streams with [`AsyncReadExt::copy_to`]:
 //!
-//! ```no_run
+//! ```
 //! use akku::io::AsyncReadExt;
 //!
 //! # akku::task::block_on(async {
@@ -75,7 +75,7 @@
 //! Disambiguating sync and async calls on a dual-impl type when both traits are
 //! in scope:
 //!
-//! ```no_run
+//! ```
 //! use akku::io::{AsyncReadExt, Read};
 //!
 //! # akku::task::block_on(async {
@@ -90,13 +90,11 @@
 //! # }).unwrap();
 //! ```
 
-#![allow(dead_code, unused_variables)]
-
 use std::fmt;
 use std::future::Future;
 use std::ops::DerefMut;
 use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::task::{ready, Context, Poll};
 
 pub use std::io::{
     copy, empty, read_to_string, repeat, sink, stderr, stdin, stdout, BufRead, BufReader,
@@ -104,6 +102,20 @@ pub use std::io::{
     LineWriter, Lines, Read, Repeat, Result, Seek, SeekFrom, Sink, Split, Stderr, StderrLock,
     Stdin, StdinLock, Stdout, StdoutLock, Take, Write, WriterPanicked,
 };
+
+/// Fixed size of the single buffer allocated by [`AsyncReadExt::copy_to`].
+const COPY_BUF_SIZE: usize = 8_192;
+
+fn over_reported(what: &str) -> Error {
+    Error::new(
+        ErrorKind::InvalidData,
+        format!("{what} reported more bytes than the buffer holds"),
+    )
+}
+
+fn write_zero() -> Error {
+    Error::new(ErrorKind::WriteZero, "writer accepted zero bytes")
+}
 
 /// Asynchronous byte reader operating on initialized `&mut [u8]` buffers.
 ///
@@ -171,7 +183,7 @@ impl<T: AsyncRead + Unpin + ?Sized> AsyncRead for &mut T {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<Result<usize>> {
-        todo!()
+        Pin::new(&mut **self.get_mut()).poll_read(cx, buf)
     }
 }
 
@@ -181,7 +193,7 @@ impl<T: AsyncRead + Unpin + ?Sized> AsyncRead for Box<T> {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<Result<usize>> {
-        todo!()
+        Pin::new(&mut **self.get_mut()).poll_read(cx, buf)
     }
 }
 
@@ -195,35 +207,35 @@ where
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<Result<usize>> {
-        todo!()
+        self.get_mut().as_mut().poll_read(cx, buf)
     }
 }
 
 impl<T: AsyncWrite + Unpin + ?Sized> AsyncWrite for &mut T {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize>> {
-        todo!()
+        Pin::new(&mut **self.get_mut()).poll_write(cx, buf)
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        todo!()
+        Pin::new(&mut **self.get_mut()).poll_flush(cx)
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        todo!()
+        Pin::new(&mut **self.get_mut()).poll_shutdown(cx)
     }
 }
 
 impl<T: AsyncWrite + Unpin + ?Sized> AsyncWrite for Box<T> {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize>> {
-        todo!()
+        Pin::new(&mut **self.get_mut()).poll_write(cx, buf)
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        todo!()
+        Pin::new(&mut **self.get_mut()).poll_flush(cx)
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        todo!()
+        Pin::new(&mut **self.get_mut()).poll_shutdown(cx)
     }
 }
 
@@ -233,35 +245,35 @@ where
     P::Target: AsyncWrite,
 {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize>> {
-        todo!()
+        self.get_mut().as_mut().poll_write(cx, buf)
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        todo!()
+        self.get_mut().as_mut().poll_flush(cx)
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        todo!()
+        self.get_mut().as_mut().poll_shutdown(cx)
     }
 }
 
 impl<T: AsyncBufRead + Unpin + ?Sized> AsyncBufRead for &mut T {
     fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<&[u8]>> {
-        todo!()
+        Pin::new(&mut **self.get_mut()).poll_fill_buf(cx)
     }
 
     fn consume(self: Pin<&mut Self>, amt: usize) {
-        todo!()
+        Pin::new(&mut **self.get_mut()).consume(amt);
     }
 }
 
 impl<T: AsyncBufRead + Unpin + ?Sized> AsyncBufRead for Box<T> {
     fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<&[u8]>> {
-        todo!()
+        Pin::new(&mut **self.get_mut()).poll_fill_buf(cx)
     }
 
     fn consume(self: Pin<&mut Self>, amt: usize) {
-        todo!()
+        Pin::new(&mut **self.get_mut()).consume(amt);
     }
 }
 
@@ -271,99 +283,99 @@ where
     P::Target: AsyncBufRead,
 {
     fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<&[u8]>> {
-        todo!()
+        self.get_mut().as_mut().poll_fill_buf(cx)
     }
 
     fn consume(self: Pin<&mut Self>, amt: usize) {
-        todo!()
+        self.get_mut().as_mut().consume(amt);
     }
 }
 
 impl AsyncRead for &[u8] {
     fn poll_read(
         self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
+        _cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<Result<usize>> {
-        todo!()
+        Poll::Ready(Read::read(self.get_mut(), buf))
     }
 }
 
 impl AsyncBufRead for &[u8] {
-    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<&[u8]>> {
-        todo!()
+    fn poll_fill_buf(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<&[u8]>> {
+        Poll::Ready(Ok(&**self.get_mut()))
     }
 
     fn consume(self: Pin<&mut Self>, amt: usize) {
-        todo!()
+        let this = self.get_mut();
+        *this = &this[amt.min(this.len())..];
     }
 }
 
 impl<T: AsRef<[u8]> + Unpin> AsyncRead for Cursor<T> {
     fn poll_read(
         self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
+        _cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<Result<usize>> {
-        todo!()
+        Poll::Ready(Read::read(self.get_mut(), buf))
     }
 }
 
 impl<T: AsRef<[u8]> + Unpin> AsyncBufRead for Cursor<T> {
-    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<&[u8]>> {
-        todo!()
+    fn poll_fill_buf(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<&[u8]>> {
+        Poll::Ready(BufRead::fill_buf(self.get_mut()))
     }
 
     fn consume(self: Pin<&mut Self>, amt: usize) {
-        todo!()
+        BufRead::consume(self.get_mut(), amt);
     }
 }
 
 impl AsyncWrite for Vec<u8> {
-    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize>> {
-        todo!()
+    fn poll_write(self: Pin<&mut Self>, _cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize>> {
+        self.get_mut().extend_from_slice(buf);
+        Poll::Ready(Ok(buf.len()))
     }
 
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        todo!()
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<()>> {
+        Poll::Ready(Ok(()))
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        todo!()
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<()>> {
+        Poll::Ready(Ok(()))
     }
 }
 
 impl AsyncRead for Empty {
     fn poll_read(
         self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut [u8],
+        _cx: &mut Context<'_>,
+        _buf: &mut [u8],
     ) -> Poll<Result<usize>> {
-        todo!()
+        Poll::Ready(Ok(0))
     }
 }
 
 impl AsyncBufRead for Empty {
-    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<&[u8]>> {
-        todo!()
+    fn poll_fill_buf(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<&[u8]>> {
+        Poll::Ready(Ok(&[]))
     }
 
-    fn consume(self: Pin<&mut Self>, amt: usize) {
-        todo!()
-    }
+    fn consume(self: Pin<&mut Self>, _amt: usize) {}
 }
 
 impl AsyncWrite for Sink {
-    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize>> {
-        todo!()
+    fn poll_write(self: Pin<&mut Self>, _cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize>> {
+        Poll::Ready(Ok(buf.len()))
     }
 
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        todo!()
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<()>> {
+        Poll::Ready(Ok(()))
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        todo!()
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<()>> {
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -375,7 +387,7 @@ pub trait AsyncReadExt: AsyncRead {
     where
         Self: Unpin,
     {
-        todo!()
+        ReadFuture { reader: self, buf }
     }
 
     /// Reads the exact number of bytes required to fill `buf`.
@@ -384,11 +396,18 @@ pub trait AsyncReadExt: AsyncRead {
     /// if EOF is reached before `buf` is full, and [`ErrorKind::InvalidData`] if
     /// the underlying reader reports more bytes than requested. Returns `Ok(())`
     /// immediately if `buf.is_empty()`.
+    ///
+    /// Dropping the future keeps the progress already made: bytes read so far
+    /// stay in the front of `buf` and are consumed from the stream.
     fn read_exact<'a>(&'a mut self, buf: &'a mut [u8]) -> ReadExactFuture<'a, Self>
     where
         Self: Unpin,
     {
-        todo!()
+        ReadExactFuture {
+            reader: self,
+            buf,
+            filled: 0,
+        }
     }
 
     /// Copies all bytes from `self` into `writer` using a fixed 8 KiB internal
@@ -398,12 +417,24 @@ pub trait AsyncReadExt: AsyncRead {
     /// the buffer drains while `self` returns `Poll::Pending`, and returns
     /// [`ErrorKind::WriteZero`] if `writer` returns `Ok(0)` with pending bytes.
     /// Does not call `shutdown` on `writer`.
+    ///
+    /// Every chunk is written completely before the next read, so dropping the
+    /// future never loses bytes already handed to a ready writer.
     fn copy_to<'a, W>(&'a mut self, writer: &'a mut W) -> CopyToFuture<'a, Self, W>
     where
         Self: Unpin,
         W: AsyncWrite + Unpin + ?Sized,
     {
-        todo!()
+        CopyToFuture {
+            reader: self,
+            writer,
+            buf: vec![0u8; COPY_BUF_SIZE].into_boxed_slice(),
+            pos: 0,
+            cap: 0,
+            total: 0,
+            read_done: false,
+            need_flush: false,
+        }
     }
 }
 
@@ -417,7 +448,7 @@ pub trait AsyncWriteExt: AsyncWrite {
     where
         Self: Unpin,
     {
-        todo!()
+        WriteFuture { writer: self, buf }
     }
 
     /// Writes the entire `buf`, retrying [`ErrorKind::Interrupted`] and short
@@ -427,11 +458,14 @@ pub trait AsyncWriteExt: AsyncWrite {
     /// bytes remain, and [`ErrorKind::InvalidData`] if the writer reports more
     /// bytes written than provided. Returns `Ok(())` immediately if
     /// `buf.is_empty()`.
+    ///
+    /// Dropping the future keeps the progress already made: bytes accepted by
+    /// the writer so far stay written.
     fn write_all<'a>(&'a mut self, buf: &'a [u8]) -> WriteAllFuture<'a, Self>
     where
         Self: Unpin,
     {
-        todo!()
+        WriteAllFuture { writer: self, buf }
     }
 
     /// Flushes this writer, ensuring all buffered data reaches the underlying
@@ -440,7 +474,7 @@ pub trait AsyncWriteExt: AsyncWrite {
     where
         Self: Unpin,
     {
-        todo!()
+        FlushFuture { writer: self }
     }
 
     /// Gracefully shuts down the writer (flushing buffered data first).
@@ -448,7 +482,7 @@ pub trait AsyncWriteExt: AsyncWrite {
     where
         Self: Unpin,
     {
-        todo!()
+        ShutdownFuture { writer: self }
     }
 }
 
@@ -462,7 +496,7 @@ pub trait AsyncBufReadExt: AsyncBufRead {
     where
         Self: Unpin,
     {
-        todo!()
+        FillBufFuture { reader: Some(self) }
     }
 }
 
@@ -471,15 +505,23 @@ impl<R: AsyncBufRead + ?Sized> AsyncBufReadExt for R {}
 /// Future returned by [`AsyncReadExt::read`].
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 pub struct ReadFuture<'a, R: ?Sized> {
-    _reader: &'a mut R,
-    _buf: &'a mut [u8],
+    reader: &'a mut R,
+    buf: &'a mut [u8],
 }
 
 impl<R: AsyncRead + Unpin + ?Sized> Future for ReadFuture<'_, R> {
     type Output = Result<usize>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        todo!()
+        let this = self.get_mut();
+        if this.buf.is_empty() {
+            return Poll::Ready(Ok(0));
+        }
+        let n = ready!(Pin::new(&mut *this.reader).poll_read(cx, this.buf))?;
+        if n > this.buf.len() {
+            return Poll::Ready(Err(over_reported("reader")));
+        }
+        Poll::Ready(Ok(n))
     }
 }
 
@@ -492,29 +534,56 @@ impl<R: ?Sized> fmt::Debug for ReadFuture<'_, R> {
 /// Future returned by [`AsyncReadExt::read_exact`].
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 pub struct ReadExactFuture<'a, R: ?Sized> {
-    _reader: &'a mut R,
-    _buf: &'a mut [u8],
+    reader: &'a mut R,
+    buf: &'a mut [u8],
+    filled: usize,
 }
 
 impl<R: AsyncRead + Unpin + ?Sized> Future for ReadExactFuture<'_, R> {
     type Output = Result<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        todo!()
+        let this = self.get_mut();
+        while this.filled < this.buf.len() {
+            let rest = &mut this.buf[this.filled..];
+            let remaining = rest.len();
+            match ready!(Pin::new(&mut *this.reader).poll_read(cx, rest)) {
+                Ok(0) => {
+                    return Poll::Ready(Err(Error::new(
+                        ErrorKind::UnexpectedEof,
+                        "stream ended before the buffer was filled",
+                    )))
+                }
+                Ok(n) if n > remaining => return Poll::Ready(Err(over_reported("reader"))),
+                Ok(n) => this.filled += n,
+                Err(e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(e) => return Poll::Ready(Err(e)),
+            }
+        }
+        Poll::Ready(Ok(()))
     }
 }
 
 impl<R: ?Sized> fmt::Debug for ReadExactFuture<'_, R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ReadExactFuture").finish_non_exhaustive()
+        f.debug_struct("ReadExactFuture")
+            .field("filled", &self.filled)
+            .field("len", &self.buf.len())
+            .finish_non_exhaustive()
     }
 }
 
 /// Future returned by [`AsyncReadExt::copy_to`].
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 pub struct CopyToFuture<'a, R: ?Sized, W: ?Sized> {
-    _reader: &'a mut R,
-    _writer: &'a mut W,
+    reader: &'a mut R,
+    writer: &'a mut W,
+    buf: Box<[u8]>,
+    pos: usize,
+    cap: usize,
+    total: u64,
+    read_done: bool,
+    need_flush: bool,
 }
 
 impl<R: AsyncRead + Unpin + ?Sized, W: AsyncWrite + Unpin + ?Sized> Future
@@ -523,28 +592,85 @@ impl<R: AsyncRead + Unpin + ?Sized, W: AsyncWrite + Unpin + ?Sized> Future
     type Output = Result<u64>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        todo!()
+        let this = self.get_mut();
+        loop {
+            // Refill only once the previous chunk is fully written.
+            if this.pos == this.cap && !this.read_done {
+                match Pin::new(&mut *this.reader).poll_read(cx, &mut this.buf) {
+                    Poll::Pending => {
+                        // Push buffered bytes out before waiting on the reader:
+                        // the peer may be waiting for them (request/response).
+                        if this.need_flush {
+                            ready!(Pin::new(&mut *this.writer).poll_flush(cx))?;
+                            this.need_flush = false;
+                        }
+                        return Poll::Pending;
+                    }
+                    Poll::Ready(Ok(0)) => this.read_done = true,
+                    Poll::Ready(Ok(n)) if n > this.buf.len() => {
+                        return Poll::Ready(Err(over_reported("reader")))
+                    }
+                    Poll::Ready(Ok(n)) => {
+                        this.pos = 0;
+                        this.cap = n;
+                    }
+                    Poll::Ready(Err(e)) if e.kind() == ErrorKind::Interrupted => continue,
+                    Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                }
+            }
+
+            while this.pos < this.cap {
+                let chunk = &this.buf[this.pos..this.cap];
+                match ready!(Pin::new(&mut *this.writer).poll_write(cx, chunk)) {
+                    Ok(0) => return Poll::Ready(Err(write_zero())),
+                    Ok(n) if n > chunk.len() => return Poll::Ready(Err(over_reported("writer"))),
+                    Ok(n) => {
+                        this.pos += n;
+                        this.total = this.total.saturating_add(n as u64);
+                        this.need_flush = true;
+                    }
+                    Err(e) if e.kind() == ErrorKind::Interrupted => {}
+                    Err(e) => return Poll::Ready(Err(e)),
+                }
+            }
+
+            if this.read_done {
+                ready!(Pin::new(&mut *this.writer).poll_flush(cx))?;
+                this.need_flush = false;
+                return Poll::Ready(Ok(this.total));
+            }
+        }
     }
 }
 
 impl<R: ?Sized, W: ?Sized> fmt::Debug for CopyToFuture<'_, R, W> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CopyToFuture").finish_non_exhaustive()
+        f.debug_struct("CopyToFuture")
+            .field("copied", &self.total)
+            .finish_non_exhaustive()
     }
 }
 
 /// Future returned by [`AsyncWriteExt::write`].
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 pub struct WriteFuture<'a, W: ?Sized> {
-    _writer: &'a mut W,
-    _buf: &'a [u8],
+    writer: &'a mut W,
+    buf: &'a [u8],
 }
 
 impl<W: AsyncWrite + Unpin + ?Sized> Future for WriteFuture<'_, W> {
     type Output = Result<usize>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        todo!()
+        let this = self.get_mut();
+        if this.buf.is_empty() {
+            return Poll::Ready(Ok(0));
+        }
+        let n = ready!(Pin::new(&mut *this.writer).poll_write(cx, this.buf))?;
+        if n > this.buf.len() {
+            return Poll::Ready(Err(over_reported("writer")));
+        }
+        Poll::Ready(Ok(n))
     }
 }
 
@@ -557,35 +683,47 @@ impl<W: ?Sized> fmt::Debug for WriteFuture<'_, W> {
 /// Future returned by [`AsyncWriteExt::write_all`].
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 pub struct WriteAllFuture<'a, W: ?Sized> {
-    _writer: &'a mut W,
-    _buf: &'a [u8],
+    writer: &'a mut W,
+    buf: &'a [u8],
 }
 
 impl<W: AsyncWrite + Unpin + ?Sized> Future for WriteAllFuture<'_, W> {
     type Output = Result<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        todo!()
+        let this = self.get_mut();
+        while !this.buf.is_empty() {
+            match ready!(Pin::new(&mut *this.writer).poll_write(cx, this.buf)) {
+                Ok(0) => return Poll::Ready(Err(write_zero())),
+                Ok(n) if n > this.buf.len() => return Poll::Ready(Err(over_reported("writer"))),
+                Ok(n) => this.buf = &this.buf[n..],
+                Err(e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(e) => return Poll::Ready(Err(e)),
+            }
+        }
+        Poll::Ready(Ok(()))
     }
 }
 
 impl<W: ?Sized> fmt::Debug for WriteAllFuture<'_, W> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("WriteAllFuture").finish_non_exhaustive()
+        f.debug_struct("WriteAllFuture")
+            .field("remaining", &self.buf.len())
+            .finish_non_exhaustive()
     }
 }
 
 /// Future returned by [`AsyncWriteExt::flush`].
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 pub struct FlushFuture<'a, W: ?Sized> {
-    _writer: &'a mut W,
+    writer: &'a mut W,
 }
 
 impl<W: AsyncWrite + Unpin + ?Sized> Future for FlushFuture<'_, W> {
     type Output = Result<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        todo!()
+        Pin::new(&mut *self.get_mut().writer).poll_flush(cx)
     }
 }
 
@@ -598,14 +736,14 @@ impl<W: ?Sized> fmt::Debug for FlushFuture<'_, W> {
 /// Future returned by [`AsyncWriteExt::shutdown`].
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 pub struct ShutdownFuture<'a, W: ?Sized> {
-    _writer: &'a mut W,
+    writer: &'a mut W,
 }
 
 impl<W: AsyncWrite + Unpin + ?Sized> Future for ShutdownFuture<'_, W> {
     type Output = Result<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        todo!()
+        Pin::new(&mut *self.get_mut().writer).poll_shutdown(cx)
     }
 }
 
@@ -618,14 +756,34 @@ impl<W: ?Sized> fmt::Debug for ShutdownFuture<'_, W> {
 /// Future returned by [`AsyncBufReadExt::fill_buf`].
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 pub struct FillBufFuture<'a, R: ?Sized> {
-    _reader: Option<&'a mut R>,
+    reader: Option<&'a mut R>,
 }
 
 impl<'a, R: AsyncBufRead + Unpin + ?Sized> Future for FillBufFuture<'a, R> {
     type Output = Result<&'a [u8]>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        todo!()
+        let this = self.get_mut();
+        let reader = this
+            .reader
+            .take()
+            .expect("FillBufFuture polled after completion");
+        // The first poll borrows `reader` only for this call, so it can be put
+        // back on `Pending`. Once it is ready, poll again with the full `'a`
+        // borrow: `poll_fill_buf` without `consume` returns the same bytes.
+        match Pin::new(&mut *reader).poll_fill_buf(cx) {
+            Poll::Pending => {
+                this.reader = Some(reader);
+                Poll::Pending
+            }
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            Poll::Ready(Ok(_)) => match Pin::new(reader).poll_fill_buf(cx) {
+                Poll::Ready(result) => Poll::Ready(result),
+                Poll::Pending => Poll::Ready(Err(Error::other(
+                    "AsyncBufRead::poll_fill_buf returned Pending right after Ready",
+                ))),
+            },
+        }
     }
 }
 
