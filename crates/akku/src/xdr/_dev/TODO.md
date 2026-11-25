@@ -13,7 +13,12 @@
 - `xdr_struct!` / `xdr_enum!` declarative macros — after `akku::nfs` exercises the manual API. (origin: `DESIGN.md` §Decisions 6)
 - `#[derive(XdrEncode, XdrDecode)]` proc macros in `akku-drive` — only if declarative `xdr_struct!` / `xdr_enum!` prove insufficient once `akku::nfs` is built. (origin: `DESIGN.md` §Public API)
 - `.x` XDR language parser / code generator (`rpcgen` equivalent, RFC 4506 §6) — build-time codegen via `[build-dependencies]` `akku` if large XDR specs beyond NFSv3 are targeted. (origin: `DESIGN.md` §Non-goals / `jsgf/rust-xdr` `xdrgen`, Sun `rpcgen`)
+- `encode_into_with` — convenience wrapper combining `encode_into` with custom `Limits`; omitted in v1 (callers use `Encoder::with_limits(buf, limits).encode(value)`). (origin: G3 API review)
 - `akku::bytes::Bytes` zero-copy opaque decoder (`decode_opaque_bytes`) — O(1) `Bytes::slice` sub-views when decoding from an `akku::bytes::Bytes` buffer rather than `&[u8]`. (origin: `DESIGN.md` §Dependencies / `crates/akku/src/bytes/mod.rs`)
 
 ## Decoding variants
 - Lenient mode (`Limits::allow_nonzero_padding`, `allow_nonzero_bool`) — only add if interoperability with a buggy real-world NFS/ONC-RPC peer requires relaxing RFC 4506 §3 / §4.4. (origin: `DESIGN.md` §Non-goals / `libtirpc` `src/xdr.c:533,600`, `nfsserve/src/xdr.rs:48,128`)
+
+## G4 implementation cleanup
+- Remove `no_run` from all rustdoc examples in `src/xdr/mod.rs` so `cargo test -p akku --doc xdr` runs every example. (origin: G3 stub scaffold)
+- Remove `#![allow(unused_variables, clippy::ptr_arg)]` from `src/xdr/mod.rs` once stub bodies are replaced with the real implementation. (origin: G3 stub scaffold)

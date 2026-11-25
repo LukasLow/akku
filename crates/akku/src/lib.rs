@@ -90,6 +90,7 @@ pub mod toml;
 pub mod units;
 pub mod url;
 pub mod ws;
+pub mod xdr;
 pub mod xml;
 pub mod yaml;
 
