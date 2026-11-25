@@ -648,3 +648,12 @@ Covering every applicable class in `akku-tdd` across Linux, macOS, and Windows C
 3. **`JoinHandle` semantics:** detach on drop, plus explicit `abort()`.
 4. **API surface:** expose `Runtime`, `Limits`, `try_block_on`, and `try_spawn`; `spawn` requires `Send + 'static`; calling runtime-dependent functions with no active runtime returns `Err(io::Error)` instead of panicking; dropping `AsyncTcpOwnedWriteHalf` calls `shutdown(Shutdown::Write)` and ignores errors.
 5. **Full `std::net` superset & `Async` naming rule (`Namespace.md` §3):** `akku::net` re-exports blocking `std::net::{TcpListener, TcpStream, UdpSocket, Incoming}` and all address/shutdown types by explicit list (never glob). Async socket types take the `Async` prefix (`AsyncTcpListener`, `AsyncTcpStream`, and `AsyncUdpSocket` / `AsyncUnix*` in Phase 2), and TCP split halves take matching prefixed names (`AsyncTcpReadHalf<'a>`, `AsyncTcpWriteHalf<'a>`, `AsyncTcpOwnedReadHalf`, `AsyncTcpOwnedWriteHalf`) for explicit async identity and flat-namespace symmetry with Phase 2 Unix halves.
+
+## G3 clarifications (2026-11-25)
+
+These are clarifications of points §Public API leaves open, pinned by `tests.rs` at G3. They do not change any decision above.
+
+1. The futures returned by `AsyncTcpListener::bind` and `AsyncTcpStream::connect` are `Send` whenever `A: Send`, so they can be passed to `akku::task::spawn`.
+2. The no-runtime error has `ErrorKind::Other` and a message that contains `"runtime"`, matching the §Error contracts text.
+3. The internal `max_registrations` cap (`65_536`) is not configurable, so the test cannot lower it. The test therefore accepts either of two outcomes: the cap error (`ErrorKind::Other`, with a message that contains `"registration limit"`) at exactly `65_536` registrations, or an earlier OS error (`raw_os_error().is_some()`, for example `EMFILE`). In both cases, registering works again once the streams are dropped. The test takes `FD_GATE` exclusively, so its fd exhaustion cannot fail tests that run in parallel.
+4. A connection reset by the peer surfaces as `ConnectionReset` or `ConnectionAborted` on read. On write it surfaces as `BrokenPipe`, `ConnectionReset`, or `ConnectionAborted`, and never as a `SIGPIPE`.

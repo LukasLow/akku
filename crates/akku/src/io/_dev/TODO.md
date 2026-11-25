@@ -16,3 +16,7 @@
 
 ## Async seeking
 - `AsyncSeek` (`start_seek`, `poll_complete`) — if/when async file I/O in `akku::fs` needs seeking beyond `spawn_blocking`. (origin: `tokio::io::AsyncSeek`, `futures-io/src/lib.rs:222-250`)
+
+## G4 implementation cleanup
+- Remove `no_run` from all rustdoc examples in `src/io/mod.rs` so `cargo test -p akku --doc io` runs every example. (origin: G3 stub scaffold)
+- Remove `#![allow(dead_code, unused_variables)]` from `src/io/mod.rs` once stub bodies are replaced with the real implementation. (origin: G3 stub scaffold)

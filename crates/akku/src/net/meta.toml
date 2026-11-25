@@ -1,0 +1,7 @@
+name = "net"
+status = "native"
+wasm32 = false
+wave = 2
+summary = "std::net superset with native async TCP listeners and streams across all Tier-1 platforms."
+owners = ["LukasLow"]
+tags = ["net", "tcp", "async", "sockets", "std-superset"]

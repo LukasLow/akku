@@ -1,0 +1,7 @@
+name = "io"
+status = "native"
+wasm32 = true
+wave = 2
+summary = "std::io superset with safe async AsyncRead, AsyncWrite, and AsyncBufRead traits."
+owners = ["LukasLow"]
+tags = ["io", "async", "streams", "std-superset"]

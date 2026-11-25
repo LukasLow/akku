@@ -321,3 +321,11 @@ Public boundaries targeted by `crates/akku/src/io/tests.rs` (G3):
 1. **Bundle `akku::io` into Phase 1:** flat `std::io` superset module with `AsyncRead`, `AsyncWrite`, `AsyncBufRead`, and extension methods (`read`, `read_exact`, `copy_to`, `write`, `write_all`, `flush`, `shutdown`, `fill_buf`), implemented by `akku::net::AsyncTcpStream` (and its split halves).
 2. **Buffer model:** `&mut [u8]` (100% safe, zero `unsafe`, Rust 1.85 stable, matching `futures-io` and `std::io::Read`).
 3. **`std`-superset naming rule (`Namespace.md` §3):** `akku::io::copy` is the re-exported synchronous `std::io::copy` (never redefined or shadowed); async copying is solely `AsyncReadExt::copy_to(&mut self, writer: &mut W)` returning `Result<u64>` (no `async_copy` free function). Document the `E0034` dual-impl method-resolution hazard on `&[u8]`/`Cursor`/`Vec<u8>`/`Empty` in rustdoc (advising explicit `Async*Ext` imports) and cover it with an explicit-disambiguation G3 test.
+
+## G3 clarifications (2026-11-25)
+
+These are clarifications of points §Public API leaves open, pinned by `tests.rs` at G3. They do not change any decision above.
+
+1. Every `*Future` returned by the `Async*Ext` methods is `Send` when its reader or writer is `Send`. This is the property §API rationale 3 relies on.
+2. Drop-cancellation keeps the progress already made. If `read_exact` is dropped, the bytes it already read stay in the caller's buffer and have been consumed from the stream. If `write_all` is dropped, the bytes already accepted by the writer stay written. `copy_to` writes each chunk it has read before it reads again, so a ready writer has received every byte read before the future is dropped.
+3. `flush` and `shutdown` call the writer's `poll_flush` or `poll_shutdown` exactly once per call when that call returns `Ready`.

@@ -89,6 +89,10 @@ name = "ini"
 path = "src/ini/tests.rs"
 
 [[test]]
+name = "io"
+path = "src/io/tests.rs"
+
+[[test]]
 name = "json"
 path = "src/json/tests.rs"
 
@@ -103,6 +107,10 @@ path = "src/math/tests.rs"
 [[test]]
 name = "mime"
 path = "src/mime/tests.rs"
+
+[[test]]
+name = "net"
+path = "src/net/tests.rs"
 
 [[test]]
 name = "process"
@@ -163,6 +171,10 @@ path = "src/regex/tests.rs"
 [[test]]
 name = "sse"
 path = "src/sse/tests.rs"
+
+[[test]]
+name = "task"
+path = "src/task/tests.rs"
 
 [[test]]
 name = "template"

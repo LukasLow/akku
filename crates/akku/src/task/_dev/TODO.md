@@ -20,3 +20,8 @@
 ## Platform extensions
 - `wasm32` `spawn` bridge (`#[cfg(target_arch = "wasm32")]`) — schedule futures onto the JS microtask queue without affecting native code paths. (origin: `CONCEPT.md` §6 / `docs/forks/tokio-axum.md` §8 Phase 7)
 - Timer driver hook for `akku::time` (`sleep`, `sleep_until`, `interval`, `timeout`) — internal park timeout integration with the `akku::time` timer wheel. (origin: `docs/forks/tokio-axum.md` §8 Phase 3)
+
+## G4 implementation cleanup
+- Remove `no_run` from all rustdoc examples in `src/task/mod.rs` so `cargo test -p akku --doc task` runs every example. (origin: G3 stub scaffold)
+- Remove `#![allow(dead_code, unused_variables)]` from `src/task/mod.rs` once stub bodies are replaced with the real implementation. (origin: G3 stub scaffold)
+- Fill the empty G3 `Drop for Runtime` stub (cancel and drop all unfinished tasks, shut down the reactor). (origin: G3 stub scaffold)

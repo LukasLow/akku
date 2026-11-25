@@ -1,0 +1,7 @@
+name = "task"
+status = "native"
+wasm32 = true
+wave = 2
+summary = "Zero-dependency async task executor, runtime, and cooperative cancellation."
+owners = ["LukasLow"]
+tags = ["task", "async", "runtime", "executor"]

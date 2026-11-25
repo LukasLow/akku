@@ -327,3 +327,16 @@ Covering every applicable class in `akku-tdd` and the Phase 1 prompt requirement
 2. **Platform tiers apply to Phase 1 (`AGENTS.md` rule 11):** `akku::net` async TCP and the `akku::task` reactor integration ship native backends for all five Tier-1 targets in Phase 1 with no `Unsupported` stubs — `epoll` on Linux/Android (`net/sys/epoll.rs`), `kqueue` on macOS/iOS (`net/sys/kqueue.rs`), and `WSAPoll` on Windows (`net/sys/wsapoll.rs`, with `IOCP`+`AFD` as a later performance follow-up).
 3. **`JoinHandle` semantics:** detach on drop, plus explicit `abort()`.
 4. **API surface:** expose `Runtime`, `Limits`, `try_block_on`, and `try_spawn`; `spawn` requires `Send + 'static`; runtime-dependent fallible functions (`akku::net` async constructors, `try_spawn` via `SpawnError::NoRuntime` / `From<SpawnError> for io::Error`) return `Err(io::Error)` / `Err(...)` with no active runtime instead of panicking; dropping `AsyncTcpOwnedWriteHalf` calls `shutdown(Shutdown::Write)` and ignores errors.
+
+## G3 clarifications (2026-11-25)
+
+These are clarifications of points §Public API leaves open, pinned by `tests.rs` at G3. They do not change any decision above.
+
+1. `Runtime` is `Send + Sync`. Cross-thread `Runtime::spawn` (§Seams, adversarial item 5) needs a shared `&Runtime`, so the tests assert `Sync`.
+2. The nested-`block_on` panic message contains `"block_on"`. The panic from `spawn` outside a runtime contains `"runtime"`.
+3. `From<JoinError>` and `From<SpawnError> for io::Error` keep `Display` unchanged, and `io::Error::get_ref()` downcasts back to the original error.
+4. `Display` is pinned only loosely, by lowercase substrings: `JoinError` contains `"cancel"` or `"panic"`, `SpawnError` contains `"runtime"`, `"shut"`, or the numeric `limit`, and each variant's text is different.
+5. `SpawnError::ShuttingDown` has no public trigger in Phase 1, so G3 tests only its `Display`. G4 may add a behavioral test, for example a task destructor that spawns during `Runtime::drop`.
+6. Spawned tasks get their first poll in FIFO spawn order. `Runtime::spawn` called outside `block_on` queues the task, which first runs on the next `block_on`.
+7. `yield_now()` polled outside any runtime calls `wake_by_ref` immediately, returns `Pending` once, and then returns `Ready`. Like Tokio, it defers the wake only inside a runtime.
+8. `Runtime::limits()` returns the configured values. A `0` poll or I/O budget is clamped to `1` internally only, so `limits()` still reports `0`.
