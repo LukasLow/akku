@@ -207,12 +207,12 @@ All target modules follow `Namespace.md` (flat by default, `std` supersets where
 | Role group | Target `akku` module | In `Namespace.md`? | Mapped surface & notes |
 |---|---|---|---|
 | Runtime core | `akku::task` | **Yes** | `Runtime`, `block_on`, `spawn`, `spawn_blocking`, `JoinHandle`, `AbortHandle`, `yield_now`, `CancelToken`, `timeout`, `join!`/`select!` helpers. On `wasm32`: transparent `#[cfg(target_arch = "wasm32")]` spawn bridge. Macro `#[akku::task::main]` via `akku-drive` (see flags below). |
-| I/O driver / reactor | Internal `net::sys` / `task::reactor` (private) | N/A (internal) | **No public `akku::mio` or `akku::reactor` module.** The readiness reactor (`epoll`/`kqueue`/`IOCP+AFD`) is an internal engine shared by `akku::task` and `akku::net`, isolating all syscall `unsafe` inside `sys/`. |
+| I/O driver / reactor | Internal `net::sys` / `task::reactor` (private) | N/A (internal) | **No public `akku::mio` or `akku::reactor` module.** The readiness reactor (`epoll`/`kqueue`/`WSAPoll`, with `IOCP+AFD` later on Windows) is an internal engine shared by `akku::task` and `akku::net`, isolating all syscall `unsafe` inside `sys/`. |
 | Sync primitives | `akku::sync` | **Yes** | `std::sync` superset (`Arc`, `Mutex`, `RwLock`, `OnceLock`, `Condvar`, `Barrier`, atomics) + async primitives: `oneshot`, `mpsc` (bounded/unbounded), `broadcast`, `watch`, `Notify`, `Semaphore`, `AsyncMutex`, `AsyncRwLock` (or `sync::async_*` / `sync::{Mutex, ...}` — exact naming resolved at G2). |
 | Time | `akku::time` (additions) | **Yes** (family exists) | Add async timers (`sleep`, `sleep_until`, `interval`, `timeout`) backed by the `akku::task` timer driver, plus IMF-fixdate (RFC 9110) HTTP date formatting/parsing (replacing `httpdate`, ~150 LOC). |
 | Net | `akku::net` | **Yes** | `std::net` superset (IP/SocketAddr + sync sockets) **plus** async `TcpListener`, `TcpStream`, `UdpSocket`, `UnixListener`, `UnixStream`, `UnixDatagram` (`#[cfg(unix)]`), and `TcpBuilder`/`SocketOpts` (`SO_REUSEADDR`, `SO_REUSEPORT`, `TCP_NODELAY`, `TCP_KEEPALIVE`, `IPV6_V6ONLY`, backlog) replacing `socket2` + `tokio::net`. |
 | HTTP types | `akku::http` + `akku::bytes` + `akku::mime` | **Yes** (all exist) | Extend `akku::http::types` with akku-owned `Request`, `Response`, `Body` (fixed bytes + streaming), `Version`, `Cookie`. Reuse existing native `akku::bytes` and `akku::mime` directly. |
-| HTTP/1+2 protocol | `akku::http::{server, client}` (internal `h1` codec) | **Yes** | Safe HTTP/1.1 parser & encoder (`Content-Length`, chunked transfer, keep-alive, `Expect: 100-continue`, strict RFC 9112 smuggling guards) powering both `http::server` and an async mode on `http::client`. HTTP/2 stays gated behind an `http2` feature inside `akku::http` (per `Namespace.md`), deferred until `akku::tls` exists. |
+| HTTP/1+2 protocol | `akku::http::{server, client}` (internal `h1` codec) | **Yes** | Safe HTTP/1.1 parser & encoder (`Content-Length`, chunked transfer, keep-alive, `Expect: 100-continue`, strict RFC 9112 smuggling guards) powering both `http::server` and an async mode on `http::client`. HTTP/2 (gated behind `http2` per `Namespace.md`) ships in two steps: h2c client/server in Phase 7, then h2 over `akku::tls` with ALPN in Phase 8. |
 | Service / middleware | `akku::http` (thin middleware hook) | **Yes** (inside `http`) | **No `akku::tower` or `akku::service` module.** Expose a small `Middleware` / `around` hook on `akku::http::App` plus essential built-in middlewares (CORS, gzip/deflate compression via `akku::archive`, body-size limit, request timeout, structured logging via `akku::log`). |
 | Router / extractors | `akku::http` | **Yes** | Internal safe radix-tree router (inspired by `matchit`), `App`, `Mount`, `FromRequest`, `IntoResponse`, `Path<T>`, `Query<T>` (over `akku::url`), `Json<T>` (over `akku::json`), `Form<T>`, `State<T>`, fallback routes, graceful shutdown. |
 | Utilities | Existing `akku::*` + private helpers | **Yes** | `akku::log`, `akku::url`, `akku::json`, `akku::error`, `akku::bytes` already exist. Small internal helpers (e.g., ~60-line safe `Slab<T>`) stay `pub(crate)`. |
@@ -232,16 +232,16 @@ All target modules follow `Namespace.md` (flat by default, `std` supersets where
 
 ## 4. What NOT to Port
 
-Dropping unnecessary crates cuts the footprint from **726,303 SLOC / 16,815 `unsafe`** down to an estimated **~8,100–10,700 SLOC / ~75 `unsafe`**.
+Dropping unnecessary crates cuts the footprint from **726,303 SLOC / 16,815 `unsafe`** down to an estimated **~8,040–10,640 SLOC / ~50–70 `unsafe`** (Phases 0–6, with `WSAPoll` on Windows).
 
 | Crates skipped | SLOC saved | `unsafe` saved | Reason not to port |
 |---|---:|---:|---|
 | `windows-sys`, `libc`, `windows-link`, `redox_syscall`, `wasi`, `errno` | 455,372 | 13,570 | 99.9% unused FFI symbols; Redox and WASI preview1 sockets are out of scope (`wasm32` uses browser APIs via `#[cfg(target_arch = "wasm32")]`). Replaced by ~700–900 LOC of minimal hand-written `sys/` bindings (see §6). |
-| `serde`, `serde_core`, `serde_derive`, `serde_json`, `serde_path_to_error`, `serde_urlencoded`, `ryu`, `zmij`, `itoa` | 46,541 | 129 | `akku` already ships native `akku::json` and `akku::url`; `std` formatting suffices for headers/status codes (`itoa` is micro-optimization). Forking `serde` would duplicate a huge framework. |
+| `serde`, `serde_core`, `serde_derive`, `serde_json`, `serde_path_to_error`, `serde_urlencoded`, `ryu`, `zmij`, `itoa` | 46,488 | 129 | `akku` already ships native `akku::json` and `akku::url`; `std` formatting suffices for headers/status codes (`itoa` is micro-optimization). Forking `serde` would duplicate a huge framework. |
 | `syn`, `proc-macro2`, `quote`, `unicode-ident`, `tokio-macros` | 51,001 | 85 | `akku-drive` is already the dedicated proc-macro crate; `#[akku::task::main]` is ~40 LOC inside `akku-drive` (no need for `tokio-macros`'s complex flavor/worker attribute matrix). |
 | `bytes`, `mime`, `form_urlencoded`, `percent-encoding`, `log` | 8,095 | 153 | Already implemented natively with zero dependencies in `akku::bytes`, `akku::mime`, `akku::url`, and `akku::log`. |
 | `tracing`, `tracing-core` (+ `tokio` `runtime/metrics`, `runtime/dump`, `loom`) | 8,582+ | 53+ | `akku::trace` is a separate Wave-3 domain. Wiring `tracing` spans into every hot poll/HTTP request bloats binary size and compile time; emit structured logs via `akku::log` at boundaries instead. |
-| `once_cell`, `parking_lot`, `parking_lot_core`, `lock_api`, `scopeguard`, `cfg-if`, `pin-project-lite`, `sync_wrapper`, `atomic-waker` | 11,452 | 578 | Superseded by Rust 1.85 `std`: `std::sync::{OnceLock, LazyLock}` replaces `once_cell`; modern `std::sync::{Mutex, RwLock, Condvar}` is already futex-backed on Linux/macOS/Windows; `std::task::Wake` + `#[cfg]` modules replace the rest. |
+| `once_cell`, `parking_lot`, `parking_lot_core`, `lock_api`, `scopeguard`, `cfg-if`, `pin-project-lite`, `sync_wrapper`, `atomic-waker` | 9,931 | 578 | Superseded by Rust 1.85 `std`: `std::sync::{OnceLock, LazyLock}` replaces `once_cell`; modern `std::sync::{Mutex, RwLock, Condvar}` is already futex-backed on Linux/macOS/Windows; `std::task::Wake` + `#[cfg]` modules replace the rest. |
 | `tower`, `tower-service`, `tower-layer`, `tower-http` (trait hierarchy) | 20,286 | 0 | Generic `Service<R>` + `Layer` + `Ready`/`Buffer`/`LoadShed`/`Balance` creates the exact trait maze `CONCEPT.md` §8 rejects. Port only the concrete HTTP middleware behaviors needed behind one simple `akku::http` middleware hook. |
 | `futures-util`, `futures-core`, `futures-task` (kitchen sink) | 16,889 | 205 | Vast combinator surface (`FuturesOrdered`, v0.3 `AsyncRead` compat, `Sink`, `BiLock`). Write only the few combinators `akku` needs (`join`, `select`, minimal `Stream`) cleanly in safe Rust. |
 | `memchr`, `httparse` SIMD, `slab`, `smallvec`, `bitflags` | 11,753 | 455 | SIMD byte scanners (`memchr`, `httparse::simd`) trade 368 `unsafe` blocks for marginal HTTP server gains; safe slice scanning / safe SWAR is fast and `#![deny(unsafe_code)]`-clean. A 60-line safe `Slab<T>` and typed structs replace `slab`/`bitflags`/`smallvec`. |
@@ -271,11 +271,11 @@ These operations cross the OS kernel ABI and have **no safe `std` equivalent**:
 |---|---|---|---|---:|
 | Readiness reactor (`epoll`) | Linux, Android | `epoll_create1`, `epoll_ctl`, `epoll_wait`, `eventfd`, `read`, `write`, `close` | `net/sys/epoll.rs` | ~15–20 |
 | Readiness reactor (`kqueue`) | macOS, iOS, FreeBSD, OpenBSD, NetBSD | `kqueue`, `kevent`, `fcntl`, `close` (`EVFILT_USER` + `NOTE_TRIGGER` acts as the waker — no pipe needed) | `net/sys/kqueue.rs` | ~10–15 |
-| Readiness reactor (`IOCP` + `AFD`) | Windows | `CreateIoCompletionPort`, `GetQueuedCompletionStatusEx`, `PostQueuedCompletionStatus`, `SetFileCompletionNotificationModes`, `CloseHandle`, `NtCreateFile`, `NtDeviceIoControlFile`, `NtCancelIoFileEx`, `RtlNtStatusToDosError`, `WSAIoctl`, `WSAGetLastError` | `net/sys/iocp.rs`, `net/sys/afd.rs` | ~30–40 |
+| Readiness reactor (`WSAPoll` first; `IOCP` + `AFD` later) | Windows | Initial: `WSAPoll`, `WSAGetLastError`, wake loopback socket. Later follow-up: `CreateIoCompletionPort`, `GetQueuedCompletionStatusEx`, `PostQueuedCompletionStatus`, `SetFileCompletionNotificationModes`, `CloseHandle`, `NtCreateFile`, `NtDeviceIoControlFile`, `NtCancelIoFileEx`, `RtlNtStatusToDosError`, `WSAIoctl` | `net/sys/wsapoll.rs` (later `iocp.rs`, `afd.rs`) | ~15–25 (~30–40 with `IOCP`+`AFD`) |
 | Socket options not in `std::net` | Unix + Windows | `setsockopt`, `getsockopt` (`SO_REUSEPORT`, `TCP_KEEPALIVE`, `IPV6_V6ONLY`, `SO_NOSIGPIPE`, `TCP_NODELAY`), plus `socket`/`bind`/`listen` only when options must be set pre-`bind` | `net/sys/sock_unix.rs`, `net/sys/sock_win.rs` | ~10–15 |
 | Process signals (deferred, TODO 0.10) | Unix + Windows | `sigaction` + self-pipe / `SetConsoleCtrlHandler` | `process/sys/` | ~10 |
 
-- **Native-first mobile coverage:** Android shares Linux's `epoll` (`target_os = "android"`), and iOS shares macOS's `kqueue` (`target_os = "ios"`), so desktop + mobile Tier-1 platforms are covered by just three backends (`epoll`, `kqueue`, `IOCP/AFD`).
+- **Native-first mobile coverage:** Android shares Linux's `epoll` (`target_os = "android"`), and iOS shares macOS's `kqueue` (`target_os = "ios"`), so desktop + mobile Tier-1 platforms are covered by just three backends (`epoll`, `kqueue`, `WSAPoll` — with `IOCP/AFD` as a later Windows follow-up).
 - **Unsupported targets** compile cleanly and return a typed `Unsupported` error (per `akku-unsafe`).
 - **Basic socket I/O stays safe:** `std::net::{TcpListener, TcpStream, UdpSocket}` and `std::os::unix::net::*` already provide safe `bind`, `connect`, `accept`, `read`, `write`, `shutdown`, and `set_nonblocking(true)`. Wrapping `std::net` types and passing their `AsRawFd`/`AsRawSocket` to the `sys` reactor avoids reimplementing socket syscalls in `unsafe`.
 
@@ -303,7 +303,7 @@ Almost all of the 1,500+ non-FFI `unsafe` tokens in `tokio`, `hyper`, `http`, `h
 | Criterion | Option A: Minimal hand-written `sys/` **(Recommended)** | Option B: Vendor/fork `libc` + `windows-sys` |
 |---|---|---|
 | Code size | **~700–900 LOC** total across Linux/Android, macOS/iOS/BSD, Windows | **449,751 SLOC** (`libc` 115,491 + `windows-sys` 334,260) |
-| `unsafe` surface | **~75–90 audited blocks** | **13,318 `unsafe` tokens** |
+| `unsafe` surface | **~50–70 audited blocks** with `WSAPoll` (~75–90 with `IOCP`+`AFD`) | **13,318 `unsafe` tokens** |
 | Compile time | Negligible (<50 ms) | Multi-second cold compile + massive doc/IDE indexing |
 | External deps | **0** | 0 if vendored, but bloats the `akku` crate tarball to tens of MB (exceeding crates.io 10 MiB limit!) |
 | ABI maintenance risk | Moderate — must get C struct layouts/constants right per target OS & arch | Low — upstream tracks every target |
@@ -318,11 +318,9 @@ Almost all of the 1,500+ non-FFI `unsafe` tokens in `tokio`, `hyper`, `http`, `h
 2. **macOS, iOS & BSD (`sys/kqueue.rs` + `sys/sock_unix.rs`, ~180 LOC):**
    - `extern "C"`: `kqueue`, `kevent`, `fcntl`, `close`, `setsockopt`, `getsockopt`.
    - Structs & constants: `kevent` (field types differ slightly between macOS/FreeBSD/NetBSD/OpenBSD — gate explicitly), `timespec`, `EVFILT_{READ,WRITE,USER}`, `EV_{ADD,DELETE,CLEAR,ENABLE,EOF,ERROR,RECEIPT}`, `NOTE_TRIGGER`, `SO_NOSIGPIPE`, `SO_REUSEPORT`, `TCP_KEEPALIVE`.
-3. **Windows (`sys/iocp.rs` + `sys/afd.rs` + `sys/sock_win.rs`, ~380 LOC):**
-   - `#[link(name = "kernel32")] extern "system"`: `CreateIoCompletionPort`, `GetQueuedCompletionStatusEx`, `PostQueuedCompletionStatus`, `SetFileCompletionNotificationModes`, `CloseHandle`.
-   - `#[link(name = "ntdll")] extern "system"`: `NtCreateFile`, `NtDeviceIoControlFile`, `NtCancelIoFileEx`, `RtlNtStatusToDosError`.
-   - `#[link(name = "ws2_32")] extern "system"`: `WSAIoctl`, `WSAGetLastError`, `setsockopt`, `getsockopt`.
-   - Structs: `OVERLAPPED`, `OVERLAPPED_ENTRY`, `IO_STATUS_BLOCK`, `OBJECT_ATTRIBUTES`, `UNICODE_STRING`, `AFD_POLL_INFO`, `AFD_POLL_HANDLE_INFO`.
+3. **Windows (`sys/wsapoll.rs` + `sys/sock_win.rs`, ~180 LOC first; optional `sys/iocp.rs` + `sys/afd.rs` later, ~380 LOC):**
+   - Initial (`WSAPoll` backend): `#[link(name = "ws2_32")] extern "system"`: `WSAPoll`, `WSAGetLastError`, `setsockopt`, `getsockopt`; struct `WSAPOLLFD`.
+   - Later performance follow-up (`IOCP` + `AFD`): `kernel32` (`CreateIoCompletionPort`, `GetQueuedCompletionStatusEx`, `PostQueuedCompletionStatus`, `SetFileCompletionNotificationModes`, `CloseHandle`), `ntdll` (`NtCreateFile`, `NtDeviceIoControlFile`, `NtCancelIoFileEx`, `RtlNtStatusToDosError`), `ws2_32` (`WSAIoctl`), and structs `OVERLAPPED`, `OVERLAPPED_ENTRY`, `IO_STATUS_BLOCK`, `OBJECT_ATTRIBUTES`, `UNICODE_STRING`, `AFD_POLL_INFO`, `AFD_POLL_HANDLE_INFO`.
 
 ### ABI safety guardrails for Option A
 
@@ -373,17 +371,18 @@ Each phase is scoped as **1 small PR** (or 2 tightly focused PRs where noted) wi
 
 | Phase | Slice / PR scope | Est. LOC | `unsafe` blocks (in `sys/`) | Replaces in existing `akku::http` adapter |
 |---|---|---:|---:|---|
-| **0** | `unsafe` mechanics (`#![deny(unsafe_code)]`, clippy lints, `THIRD_PARTY_LICENSES` scaffold, `Cargo.toml` `include`) | ~40 | 0 | Governance prerequisite for `sys/` |
+| **0** | `unsafe` mechanics (`#![deny(unsafe_code)]`, clippy lints, `THIRD_PARTY_LICENSES` scaffold, `Cargo.toml` `include`, `Namespace.md` updates) | ~40 | 0 | Governance prerequisite for `sys/` |
 | **1** | **First vertical slice:** minimal single-threaded `akku::task` (`block_on`, `spawn`, `JoinHandle`, `yield_now`) + Linux `epoll` reactor (`net/sys/epoll.rs`) + `akku::net` (`std::net` re-exports + async `TcpListener` / `TcpStream`) | ~1,200–1,600 | ~15–20 | Foundation (no adapter removed yet; immediately unblocks `akku::net` & `akku::nfs` on Linux/`smd`) |
 | **2a** | macOS/iOS/BSD `kqueue` reactor (`net/sys/kqueue.rs`) + async `UdpSocket` + Unix domain sockets (`UnixListener`/`UnixStream`/`UnixDatagram`) + Unix `SocketOpts` | ~900–1,100 | ~20–25 | Replaces `mio` (Unix) + `socket2` (Unix) + `tokio::net` (Unix) |
-| **2b** | Windows `IOCP` + `AFD` reactor (`net/sys/iocp.rs`, `net/sys/afd.rs`) + Windows `SocketOpts` | ~600–800 | ~30–40 | Replaces `mio` (Windows) + `socket2` (Windows) + `tokio::net` (Windows) |
+| **2b** | Windows `WSAPoll` reactor first (`net/sys/wsapoll.rs`) + Windows `SocketOpts`; `IOCP` + `AFD` later as a performance follow-up | ~400–600 | ~15–25 | Replaces `mio` (Windows) + `socket2` (Windows) + `tokio::net` (Windows) |
 | **3** | Async timers (`sleep`, `sleep_until`, `timeout`, `interval`) + `akku::sync` (`std::sync` superset + async `oneshot`, `mpsc`, `broadcast`, `watch`, `Notify`, `Semaphore`, async `Mutex`/`RwLock`) | ~1,200–1,500 | 0 | Replaces `tokio::time`, `tokio::sync`, `parking_lot*`, `once_cell` |
 | **4** | Multi-threaded `akku::task` runtime (per-worker `Mutex<VecDeque>` + `try_lock` batch stealing), `spawn_blocking` pool (for DNS & `fs`), `#[akku::task::main]` in `akku-drive` | ~900–1,200 | 0 | Replaces `tokio::runtime::Builder::new_multi_thread()` in `crates/akku/src/http/server.rs` (`__private::run`) and `tokio-macros` |
 | **5** | Native HTTP/1.1 server codec (`akku::http::h1`: parser, encoder, chunked, keep-alive, smuggling/DoS guards, IMF-fixdate) + akku-owned `Request`, `Response`, `Body` (bytes + streaming), `Cookie`, graceful shutdown | ~1,800–2,400 | 0 | Replaces `hyper`, `hyper-util`, `httparse`, `http`, `http-body*`, `httpdate`; removes `axum::extract::Request` & `axum::response::Response` re-exports in `http/server.rs` and `axum::response::IntoResponse` in `html/mod.rs` |
 | **6** | Native safe radix-tree router (`http::router`), `FromRequest`/`IntoResponse`/`Handler`, extractors (`Path`, `Query`, `Json`, `Form`, `State`), thin `Middleware` hook (CORS, compression, limits, timeout), update `akku-drive` route macros & `App::serve` | ~1,600–2,200 | 0 | Replaces `axum`, `axum-core`, `matchit`, `tower*`, `serde*`; **deletes `axum` and `tokio` from `Cargo.toml` — `akku` reaches 0 external runtime dependencies** |
-| **7** | *(Follow-up)* Async mode + connection pooling in `akku::http::client` + `wasm32` `fetch` client & `task::spawn`; evaluate HTTP/2 once `akku::tls` lands | ~1,200 (client) / ~6,000+ (h2) | 0 | Brings `http::client` & `task` to full async + `wasm32` parity |
+| **7** | *(Follow-up)* Async mode + connection pooling in `akku::http::client` + `wasm32` `fetch` client & `task::spawn`; HTTP/2 cleartext (h2c: HPACK, streams, flow control, Rapid-Reset guards) for client and server | ~1,200 (client) / ~6,000+ (h2) | 0 | Brings `http::client` & `task` to full async + `wasm32` parity; adds h2c client & server |
+| **8** | *(Follow-up)* HTTP/2 over `akku::tls` with ALPN — Go `net/http` parity (HTTP/1.1 + h2c + h2, client and server) | ~800–1,200 | 0 | Completes Go `net/http` parity (HTTP/1.1 + h2c + h2 over TLS) |
 
-**Total for Phases 0–6 (zero-dep async runtime + cross-platform networking + HTTP/1.1 server):** **~8,240–10,840 LOC**, **~65–85 `unsafe` blocks** (all confined to `sys/`).
+**Total for Phases 0–6 (zero-dep async runtime + cross-platform networking + HTTP/1.1 server):** **~8,040–10,640 LOC**, **~50–70 `unsafe` blocks** (with `WSAPoll` on Windows; all confined to `sys/`).
 
 ### Why Phase 1 is the right first slice
 
@@ -401,7 +400,7 @@ Each phase is scoped as **1 small PR** (or 2 tightly focused PRs where noted) wi
 2. **Windows `AFD` undocumented NT APIs:** `mio`, `wepoll`, and `polling` rely on `NtDeviceIoControlFile` against `\Device\Afd\Mio` to emulate readiness polling over IOCP. While de-facto stable (used by Node.js/libuv, Python, and Rust's async ecosystem), it is technically undocumented and has subtle handle-unwrapping edge cases (`SIO_BASE_HANDLE` / layered service providers).
 3. **Multi-threaded scheduler scalability:** A safe per-worker `Mutex<VecDeque>` + `try_lock` batch-stealing scheduler is fast and zero-`unsafe` for typical web/service workloads (tens of thousands of req/s), but under extreme micro-task ping-pong contention on 32+ cores it may trail Tokio's lock-free Chase-Lev deque. Benchmark in `--release` during Phase 4 before considering any more complex design.
 4. **Linux `io_uring`:** Readiness-based `epoll` matches Rust's borrow-based `Future` model cleanly. Completion-based `io_uring` requires owned buffers (kernel holds pointers across polls — dropping a `Future` cannot cancel synchronously without risking UAF), has had recurring kernel security vulnerabilities, and is blocked by default in many container seccomp profiles (including Docker/OrbStack defaults). Recommend **deferring `io_uring`** indefinitely unless a specialized buffer-owning I/O API is designed later.
-5. **HTTP/2 complexity & TLS dependency:** Full HTTP/2 (`h2` is ~12k LOC: HPACK, stream state machine, flow control, priority/settings frames, plus high-severity CVE history like Rapid Reset CVE-2023-44487) is larger than the entire Phases 1–4 runtime+net stack, and browsers only negotiate HTTP/2 over TLS (ALPN). Shipping HTTP/1.1 first gives full zero-dep `akku::http` parity; HTTP/2 can wait until `akku::tls` exists (or be revisited alongside `akku::quic` / HTTP/3).
+5. **HTTP/2 complexity & TLS dependency:** Full HTTP/2 (`h2` is ~12k LOC: HPACK, stream state machine, flow control, priority/settings frames, plus high-severity CVE history like Rapid Reset CVE-2023-44487) is larger than the entire Phases 1–4 runtime+net stack, and browsers only negotiate HTTP/2 over TLS (ALPN). Decision: ship HTTP/1.1 first, then h2c, then h2 over `akku::tls` (Go `net/http` parity); HTTP/3 is revisited alongside `akku::quic`.
 6. **Cross-architecture C ABI drift in hand-written `sys/`:** Struct layout differences (e.g., `epoll_event` packing on `x86_64` vs `aarch64`, BSD `kevent` field widths) can cause subtle memory corruption if wrong. Mitigated by compile-time `size_of`/`offset_of` assertions and running Linux (x86_64 + aarch64), macOS, and Windows CI runners.
 
 ### Open questions for the human
@@ -416,3 +415,13 @@ Each phase is scoped as **1 small PR** (or 2 tightly focused PRs where noted) wi
    - Where is the canonical home for `sleep` / `interval` / `timeout` (`akku::time` vs `akku::task` vs `akku::schedule`)?
 6. **Extractors without `serde`:** Confirm whether `akku::http::Json<T>` / `Query<T>` / `Form<T>` should target `akku::json` and `akku::url` natively (zero external deps), and whether an optional `serde` feature flag should also be offered later.
 7. **Proceed with Phase 0 + Phase 1?** Ready to kick off the `unsafe` mechanics PR (Phase 0) followed by the single-threaded `akku::task` + Linux `epoll` `akku::net` TCP vertical slice (Phase 1)?
+
+### Decisions (human, 2026-11-25)
+
+1. **Scheduler:** 100% safe per-worker `Mutex<VecDeque>` + `try_lock` batch stealing; no `unsafe` outside `sys/`.
+2. **Windows backend:** `WSAPoll` first; `IOCP` + `AFD` later as a benchmarked performance follow-up.
+3. **HTTP:** target is parity with Go `net/http` — HTTP/1.1, HTTP/2 cleartext (h2c), and HTTP/2 over TLS, client and server. Delivery order: HTTP/1.1 (Phase 5–6) → h2c (Phase 7) → h2 + TLS/ALPN once `akku::tls` exists (Phase 8). HTTP/2 is part of the plan, not deferred indefinitely.
+4. **`App::into_axum()`:** dropped; `akku::http::{Request, Response, Router}` become akku-owned types during `0.0.x`.
+5. **Namespace:** async `AsyncRead`/`AsyncWrite` live in a new flat `akku::io` (`std::io` superset); `sleep`/`sleep_until`/`interval`/`timeout` live in `akku::time`; the runtime is `akku::task`; `akku::schedule` keeps cron/retry/backoff. `#[akku::task::main]` is added next to `#[akku::http::main]`. These names go into `Namespace.md` in the Phase 0 PR.
+6. **Extractors:** `Json`/`Query`/`Form` target `akku::json` and `akku::url` natively; no `serde`.
+7. **Go:** Phase 0 and Phase 1 start now.
