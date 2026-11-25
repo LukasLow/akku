@@ -1,23 +1,29 @@
-//! Pure-Rust date, time, duration, time zone, and clock primitives.
+//! Pure-Rust date, time, duration, time zone, and clock primitives, plus the
+//! full `std::time` surface.
 //!
-//! `akku::time` provides signed nanosecond-precision [`Duration`] values,
-//! proleptic Gregorian [`Date`] / [`Time`] / [`DateTime`] / [`OffsetDateTime`]
-//! types with RFC 3339 parsing and formatting, fixed [`UtcOffset`] / [`TimeZone`]
-//! support, and an injectable [`Clock`] trait with [`SystemClock`] and
-//! [`MockClock`] for deterministic testing.
+//! `akku::time` is a `std::time` superset: it re-exports [`Duration`],
+//! [`Instant`], [`SystemTime`], [`SystemTimeError`],
+//! [`TryFromFloatSecsError`], and [`UNIX_EPOCH`] unchanged, and adds:
+//! - Signed nanosecond-precision [`SignedDuration`] values (named after
+//!   [`jiff::SignedDuration`](https://docs.rs/jiff/latest/jiff/struct.SignedDuration.html)).
+//! - Proleptic Gregorian [`Date`] / [`Time`] / [`DateTime`] /
+//!   [`OffsetDateTime`] types with RFC 3339 parsing and formatting.
+//! - Fixed [`UtcOffset`] / [`TimeZone`] support.
+//! - An injectable [`Clock`] trait producing [`ClockInstant`] readings, with
+//!   [`SystemClock`] and [`MockClock`] for deterministic testing.
 //!
 //! # Examples
 //!
 //! ```
-//! use akku::time::{Clock, Duration, MockClock, OffsetDateTime, UtcOffset};
+//! use akku::time::{Clock, MockClock, OffsetDateTime, SignedDuration, UtcOffset};
 //!
 //! let start: OffsetDateTime = "2024-06-01T12:00:00Z".parse().unwrap();
 //! let clock = MockClock::new(start);
 //!
 //! let t0 = clock.monotonic();
-//! clock.advance("1h30m".parse::<Duration>().unwrap());
+//! clock.advance("1h30m".parse::<SignedDuration>().unwrap());
 //!
-//! assert_eq!(t0.elapsed_from(&clock), Duration::from_mins(90));
+//! assert_eq!(t0.elapsed_from(&clock), SignedDuration::from_mins(90));
 //! assert_eq!(
 //!     clock.now().to_offset(UtcOffset::from_hms(2, 0, 0).unwrap()).format_rfc3339(),
 //!     "2024-06-01T15:30:00+02:00"
@@ -32,9 +38,13 @@ pub mod datetime;
 pub mod duration;
 pub mod timezone;
 
-pub use clock::{Clock, Instant, MockClock, SystemClock};
+pub use std::time::{
+    Duration, Instant, SystemTime, SystemTimeError, TryFromFloatSecsError, UNIX_EPOCH,
+};
+
+pub use clock::{Clock, ClockInstant, MockClock, SystemClock};
 pub use datetime::{Date, DateTime, OffsetDateTime, Time, Weekday};
-pub use duration::Duration;
+pub use duration::SignedDuration;
 pub use timezone::{TimeZone, UtcOffset};
 
 /// An error returned when parsing a duration, date, time, timestamp, or time zone.
@@ -94,8 +104,10 @@ pub enum TimeError {
     },
     /// The UTC offset components or total seconds are out of range or inconsistently signed.
     InvalidOffset,
-    /// A negative [`Duration`] cannot be converted into an unsigned [`std::time::Duration`].
+    /// A negative [`SignedDuration`] cannot be converted into an unsigned [`Duration`].
     NegativeDuration,
+    /// A mock [`ClockInstant`] cannot be converted into an OS [`Instant`].
+    MockInstant,
     /// A value fell outside the valid range for the requested operation.
     OutOfRange,
     /// An arithmetic or conversion operation overflowed.
@@ -130,6 +142,9 @@ impl fmt::Display for TimeError {
             Self::InvalidOffset => f.write_str("invalid UTC offset"),
             Self::NegativeDuration => {
                 f.write_str("cannot convert negative duration to std::time::Duration")
+            }
+            Self::MockInstant => {
+                f.write_str("cannot convert mock ClockInstant to std::time::Instant")
             }
             Self::OutOfRange => f.write_str("time value out of representable range"),
             Self::Overflow => f.write_str("time arithmetic overflow"),

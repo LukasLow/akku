@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::fs::write_atomic;
-use crate::time::{Clock, Duration as AkkuDuration, OffsetDateTime, SystemClock};
+use crate::time::{Clock, OffsetDateTime, SignedDuration, SystemClock};
 
 use super::{BatchOp, KvError, KvLimits, KvResult, KvStore};
 
@@ -303,7 +303,7 @@ fn compute_expires_ms(clock: &dyn Clock, ttl: Duration) -> i64 {
     if ttl.is_zero() {
         return i64::MIN;
     }
-    let akku_ttl = AkkuDuration::try_from(ttl).unwrap_or(AkkuDuration::MAX);
+    let akku_ttl = SignedDuration::try_from(ttl).unwrap_or(SignedDuration::MAX);
     let target = clock
         .now()
         .checked_add(akku_ttl)

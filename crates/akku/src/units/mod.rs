@@ -2,7 +2,7 @@
 //!
 //! Every quantity stores its value in canonical SI base units (except [`TimeSpan`],
 //! which preserves exact nanosecond representation when created from
-//! [`crate::time::Duration`]).
+//! [`crate::time::SignedDuration`]).
 //!
 //! # Examples
 //!
@@ -23,7 +23,7 @@ use std::error::Error;
 use std::fmt;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use crate::time::Duration;
+use crate::time::SignedDuration;
 
 /// An error returned when constructing a physically invalid quantity.
 #[derive(Debug, Clone, PartialEq)]
@@ -400,23 +400,23 @@ impl_linear_quantity!(Mass, "kg");
 
 #[derive(Debug, Clone, Copy)]
 enum TimeSpanRepr {
-    Exact(Duration),
+    Exact(SignedDuration),
     Float(f64),
 }
 
-/// A physical time interval in SI seconds (`s`) with lossless [`Duration`] interop.
+/// A physical time interval in SI seconds (`s`) with lossless [`SignedDuration`] interop.
 ///
 /// Constructing a `TimeSpan` via `TimeSpan::from(duration)` stores the exact
-/// nanosecond [`Duration`] internally so [`TimeSpan::to_duration`] round-trips
+/// nanosecond [`SignedDuration`] internally so [`TimeSpan::to_duration`] round-trips
 /// without floating-point precision loss.
 ///
 /// # Examples
 ///
 /// ```
-/// use akku::time::Duration;
+/// use akku::time::SignedDuration;
 /// use akku::units::TimeSpan;
 ///
-/// let exact = Duration::new(10_000_000_000, 1);
+/// let exact = SignedDuration::new(10_000_000_000, 1);
 /// let span = TimeSpan::from(exact);
 /// assert_eq!(span.to_duration(), Some(exact));
 /// ```
@@ -431,7 +431,7 @@ impl Default for TimeSpan {
 
 impl TimeSpan {
     /// Zero time span.
-    pub const ZERO: Self = Self(TimeSpanRepr::Exact(Duration::ZERO));
+    pub const ZERO: Self = Self(TimeSpanRepr::Exact(SignedDuration::ZERO));
 
     /// Creates a `TimeSpan` from floating-point seconds.
     pub const fn from_secs(secs: f64) -> Self {
@@ -468,15 +468,15 @@ impl TimeSpan {
         Self::from_secs(days * 86_400.0)
     }
 
-    /// Converts this `TimeSpan` into an [`akku::time::Duration`](Duration).
+    /// Converts this `TimeSpan` into an [`akku::time::SignedDuration`](SignedDuration).
     ///
-    /// When backed by an exact `Duration`, this returns it losslessly. When
+    /// When backed by an exact `SignedDuration`, this returns it losslessly. When
     /// backed by floating-point seconds, this returns `None` if the value is
-    /// non-finite or overflows `Duration`.
-    pub fn to_duration(self) -> Option<Duration> {
+    /// non-finite or overflows `SignedDuration`.
+    pub fn to_duration(self) -> Option<SignedDuration> {
         match self.0 {
             TimeSpanRepr::Exact(d) => Some(d),
-            TimeSpanRepr::Float(s) => Duration::try_from_secs_f64(s).ok(),
+            TimeSpanRepr::Float(s) => SignedDuration::try_from_secs_f64(s).ok(),
         }
     }
 
@@ -519,8 +519,8 @@ impl TimeSpan {
     }
 }
 
-impl From<Duration> for TimeSpan {
-    fn from(duration: Duration) -> Self {
+impl From<SignedDuration> for TimeSpan {
+    fn from(duration: SignedDuration) -> Self {
         Self(TimeSpanRepr::Exact(duration))
     }
 }

@@ -187,6 +187,32 @@ fn command_reexports_are_usable() {
     assert_ne!(akku::process::id(), 0);
 }
 
+#[test]
+fn std_process_reexports_cover_args_envs_termination_and_abort() {
+    let mut cmd = akku::process::Command::new("echo");
+    cmd.arg("hello").env("AKKU_PROC_REEXPORT", "1");
+
+    let args: akku::process::CommandArgs<'_> = cmd.get_args();
+    assert_eq!(args.collect::<Vec<_>>(), vec!["hello"]);
+
+    let envs: akku::process::CommandEnvs<'_> = cmd.get_envs();
+    assert_eq!(
+        envs.collect::<Vec<_>>(),
+        vec![(
+            std::ffi::OsStr::new("AKKU_PROC_REEXPORT"),
+            Some(std::ffi::OsStr::new("1"))
+        )]
+    );
+
+    fn report_code<T: akku::process::Termination>(value: T) -> akku::process::ExitCode {
+        value.report()
+    }
+    let _ok_code = report_code(akku::process::ExitCode::SUCCESS);
+    let _err_code = report_code(Err::<(), &str>("boom"));
+
+    let _abort_fn: fn() -> ! = akku::process::abort;
+}
+
 #[cfg(unix)]
 #[test]
 fn pipeline_sorts_through_two_stages() {
