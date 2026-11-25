@@ -6,10 +6,11 @@
 
 ## Extended RFC 4506 types
 - `quadruple` (128-bit IEEE 754 float, RFC 4506 §4.8) — add once Rust stabilizes `f128` (or as raw `[u8; 16]` helper if a protocol requires it). (origin: `DESIGN.md` §Non-goals / RFC 4506 §4.8, `libtirpc` `xdr_quadruple`)
-- `decode_ascii_str` / `encode_ascii_str` — strict 7-bit US-ASCII string variant per RFC 4506 §4.11 if a caller wants ASCII rejection beyond UTF-8. (origin: `DESIGN.md` §Open questions / RFC 4506 §4.11)
+- `decode_ascii_str` / `encode_ascii_str` — strict 7-bit US-ASCII string variant per RFC 4506 §4.11 if a caller wants ASCII rejection beyond UTF-8. (origin: `DESIGN.md` §Decisions 1 / RFC 4506 §4.11)
 - `encoded_size` / `XdrSize` — compute exact wire byte length without allocating or writing a buffer. (origin: `DESIGN.md` §References / `libtirpc` `xdr_sizeof`)
 
 ## Ergonomics & codegen
+- `xdr_struct!` / `xdr_enum!` declarative macros — after `akku::nfs` exercises the manual API. (origin: `DESIGN.md` §Decisions 6)
 - `#[derive(XdrEncode, XdrDecode)]` proc macros in `akku-drive` — only if declarative `xdr_struct!` / `xdr_enum!` prove insufficient once `akku::nfs` is built. (origin: `DESIGN.md` §Public API)
 - `.x` XDR language parser / code generator (`rpcgen` equivalent, RFC 4506 §6) — build-time codegen via `[build-dependencies]` `akku` if large XDR specs beyond NFSv3 are targeted. (origin: `DESIGN.md` §Non-goals / `jsgf/rust-xdr` `xdrgen`, Sun `rpcgen`)
 - `akku::bytes::Bytes` zero-copy opaque decoder (`decode_opaque_bytes`) — O(1) `Bytes::slice` sub-views when decoding from an `akku::bytes::Bytes` buffer rather than `&[u8]`. (origin: `DESIGN.md` §Dependencies / `crates/akku/src/bytes/mod.rs`)

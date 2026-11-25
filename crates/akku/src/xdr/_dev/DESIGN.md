@@ -8,7 +8,7 @@ XDR (External Data Representation, RFC 4506 / STD 67) is the big-endian, 4-byte-
 
 ## Non-goals
 
-- **No XDR language compiler / `rpcgen` in v1.** Parsing `.x` IDL files (RFC 4506 §6) and generating Rust code adds a full compiler pipeline for a small, fixed set of RFC 1813/5531 structures. Hand-written `Encoder`/`Decoder` calls plus optional declarative macros (`xdr_struct!`, `xdr_enum!`) are smaller, easier to audit, and require no build script. Deferred to [`TODO.md`](TODO.md).
+- **No XDR language compiler / `rpcgen` in v1.** Parsing `.x` IDL files (RFC 4506 §6) and generating Rust code adds a full compiler pipeline for a small, fixed set of RFC 1813/5531 structures. Hand-written `Encoder`/`Decoder` calls (with optional declarative macros `xdr_struct!`, `xdr_enum!` deferred until after `akku::nfs`, see Decisions §6) are smaller, easier to audit, and require no build script. Deferred to [`TODO.md`](TODO.md).
 - **No ONC-RPC protocol layer or RPCSEC_GSS.** ONC-RPC call/reply envelopes, `AUTH_NONE`/`AUTH_SYS`, `RPCSEC_GSS` (RFC 2203), and TCP Record Marking (RFC 5531 §11) belong above XDR. Per [`Namespace.md`](../../../../../Namespace.md), ONC-RPC stays internal to `akku::nfs` for now; GSS/auth belongs to `akku::auth` / `akku::crypto`.
 - **No quadruple-precision floating point (`quadruple`, RFC 4506 §4.8).** Rust stable has no `f128` primitive, ONC-RPC and NFSv3 do not use 128-bit floats, and none of the surveyed Go, Rust, or Python XDR libraries implement it. Raw 16-byte pass-through can be done via fixed opaque if ever needed; deferred to [`TODO.md`](TODO.md).
 - **No lenient decoding mode.** RFC 4506 §3, §4.4, and §5(5) require 0-byte alignment padding (so encodings are canonical and checksum-comparable) and restrict booleans to `0` (`FALSE`) and `1` (`TRUE`). Non-zero padding and invalid booleans are always rejected. A lenient escape hatch is deferred to [`TODO.md`](TODO.md) unless a real peer requires it.
@@ -30,7 +30,7 @@ Proposed public items under `akku::xdr`:
 - `Opaque`, `FixedOpaque`
 - `Error`, `Result`
 - Free functions: `encode`, `encode_into`, `encode_with`, `decode`, `decode_with`, `padding_len`, `padded_len`
-- Declarative macro sugar: `xdr_struct!`, `xdr_enum!`
+- Declarative macro sugar: `xdr_struct!`, `xdr_enum!` — **not in v1**; added after `akku::nfs` (see Decisions §6)
 
 No name clashes: `akku::xdr` is a flat module (not a reserved keyword, does not shadow `::core`), and all generic names (`Encoder`, `Decoder`, `Error`, `Result`) stay inside `akku::xdr::*` per [`Namespace.md`](../../../../../Namespace.md) rule 2 and rule 5.
 
@@ -198,7 +198,7 @@ pub enum Error {
 
 ### Encoder (`Encoder<'a>`)
 
-Writes big-endian, 4-byte-aligned XDR into a caller-owned `Vec<u8>`. Every write checks `Limits::max_total_bytes` before growing the buffer.
+Writes big-endian, 4-byte-aligned XDR into a caller-owned `Vec<u8>`. Every write checks `Limits::max_total_bytes` before growing the buffer; on any error, `encode_into` and `nest` truncate the buffer back to `start_len` so no partial bytes remain (see Decisions §4).
 
 ```rust
 pub struct Encoder<'a> { /* &'a mut Vec<u8>, start_len, limits, depth */ }
@@ -389,7 +389,7 @@ pub fn decode_with<T: XdrDecode>(input: &[u8], limits: Limits) -> Result<T>;
 
 `decode` and `decode_with` call `T::decode(&mut dec)` followed by `dec.finish()?`, rejecting trailing bytes by default. Callers decoding multiple concatenated messages use `Decoder::new(input)` directly.
 
-### Optional declarative macro sugar (no proc macros)
+### Optional declarative macro sugar (no proc macros) — post-`nfs`, not v1
 
 ```rust
 // Generates `XdrEncode` and `XdrDecode` (depth-guarded via `nest`) for a struct whose fields implement them:
@@ -430,7 +430,7 @@ Manual `impl XdrEncode` / `impl XdrDecode` remains first-class and is the natura
 - **Overflow-safe padding math.** `padding_len(len) = (4 - (len & 3)) & 3` and `padded_len` via `checked_add` avoid `serde-xdr`'s `u32` wraparound at `length >= u32::MAX - 2` (`src/de/mod.rs:91-92`) and stay panic-free on 32-bit `wasm32` targets.
 - **Strings validated as UTF-8; raw bytes use opaque.** Matches `stellar/go-xdr` (`xdr3/decode.go:523`), `xdr-codec` (`src/lib.rs:361`), and `serde-xdr` (`src/de/deserializer/mod.rs:167`). UTF-8 is a strict superset of RFC 4506 §4.11 ASCII; NFSv3 `filename3`/`nfspath3` (arbitrary OS bytes, `nfsserve/src/nfs.rs:44,87-88`) use `decode_opaque_slice` / `decode_opaque` directly.
 - **`Copy`, `#[non_exhaustive]` `Error` with byte `offset`.** Zero-allocation error paths, forward-compatible enum variants, and exact byte offsets for protocol debugging.
-- **Macros are sugar only.** `xdr_struct!` and `xdr_enum!` are plain `macro_rules!` over `Encoder`/`Decoder`, keeping `akku-drive` untouched and following `AGENTS.md` rule 7 and `CONCEPT.md` §8.5.
+- **Macros are sugar only (post-`nfs`, not v1).** Deferred until after `akku::nfs` exercises the manual API (see Decisions §6); when added, `xdr_struct!` and `xdr_enum!` will be plain `macro_rules!` over `Encoder`/`Decoder`, keeping `akku-drive` untouched and following `AGENTS.md` rule 7 and `CONCEPT.md` §8.5.
 
 ## Seams
 
@@ -446,7 +446,7 @@ Public boundaries targeted by `crates/akku/src/xdr/tests.rs` (G3):
 | `encode_array` / `decode_array`, `encode_fixed_array` / `decode_fixed_array*` | element count mismatches, missing per-element 4-byte alignment, depth accounting | — |
 | `encode_option` / `decode_option` and `encode_list` / `decode_list` | invalid optional tag (`2`, `-1`), empty vs multi-element lists, stack overflow on long linked lists | — |
 | `encode_union_i32` / `decode_union_i32` and `*_u32` (including `void` arm and unknown discriminant) | wrong discriminant width/signedness, arm dispatch bugs, missing `InvalidDiscriminant` | — |
-| `XdrEncode` / `XdrDecode`, `encode` / `decode` / `decode_with`, `xdr_struct!`, `xdr_enum!` | trait coherence, macro hygiene, trailing-byte rejection in `decode`, sparse/negative enum discriminants | — |
+| `XdrEncode` / `XdrDecode`, `encode` / `encode_into` / `decode` / `decode_with` | trait coherence, trailing-byte rejection in `decode`, rollback to `start_len` on error, sparse/negative enum discriminants | — |
 | `Limits` and `Error` (`Display`, `std::error::Error`, exact `offset`) | limit bypasses, off-by-one offsets, depth counter leaks after error | — |
 
 ### Adversarial test list for G3
@@ -458,7 +458,7 @@ Covering every applicable class in `akku-tdd` and `akku-security-audit`:
    - Truncation at every byte offset `0..encoded.len()` of a representative composite message (NFSv3-shaped struct with opaque, string, array, union, option).
    - Wire lengths `0`, `1`, `u32::MAX - 3`, `u32::MAX - 2`, `u32::MAX - 1`, `u32::MAX` for opaque, string, and array (must return `LengthLimit` or `LengthOverflow` immediately — never wrap, panic, or allocate).
    - `padded_len(usize::MAX)`, `padded_len(usize::MAX - 1)`, `padded_len(usize::MAX - 2)`, `padded_len(usize::MAX - 3)`.
-   - `encode_opaque_bounded` / `encode_str_bounded` / `encode_array` at `len == max` (pass) and `len == max + 1` (fail with `LengthLimit`, buffer untouched or documented).
+   - `encode_opaque_bounded` / `encode_str_bounded` / `encode_array` at `len == max` (pass) and `len == max + 1` (fail with `LengthLimit`, buffer truncated back to `start_len`).
 2. **Strict malformed rejection:**
    - Non-zero padding in **every** padding byte position (1st, 2nd, 3rd pad byte for lengths `1`, `2`, `3`, `5`, `6`, `7`) for fixed opaque, variable opaque, and string -> `Error::NonZeroPadding { offset, byte }` with exact offset and byte.
    - Invalid booleans (`2`, `-1`, `i32::MIN`, `i32::MAX`, `0x0100_0000`) in `decode_bool`, `decode_option`, and `decode_list` -> `Error::InvalidBool`.
@@ -480,19 +480,17 @@ Covering every applicable class in `akku-tdd` and `akku-security-audit`:
    - NFSv3-shaped composite round-trip: `fhandle3` (`opaque<64>`), `cookieverf3` (`opaque[8]`), `fattr3` (enums + `u32` + `u64`), `READDIR3resok` (`decode_list` of `entry3`), and `nfsstat3` discriminated union (`NFS3_OK = 0` vs `NFS3ERR_JUKEBOX = 10008`).
    - Edge values: `i32::{MIN, -1, 0, 1, MAX}`, `u32::{0, MAX}`, `i64::{MIN, MAX}`, `u64::{0, MAX}`, `f32`/`f64` `(-0.0, +0.0, ±inf, MIN_POSITIVE, subnormal, NaN bit-pattern round-trip)`, strings with embedded `\0`, CRLF, and multi-byte UTF-8.
 5. **Buffer reuse & offset tracking:**
-   - Encoding into a non-empty `Vec<u8>` (e.g., 4-byte RPC record header already present) preserves the prefix, reports `written()` relative to start, and counts `max_total_bytes` against bytes written by this `Encoder`.
+   - Encoding into a non-empty `Vec<u8>` (e.g., 4-byte RPC record header already present) preserves the prefix, reports `written()` relative to start, counts `max_total_bytes` against bytes written by this `Encoder`, and truncates back to `start_len` (preserving the prefix) on any `encode_into` / `nest` error.
 
-## Open questions
+## Decisions (human, 2026-11-25)
 
-1. **String encoding: UTF-8 (proposed) vs strict 7-bit US-ASCII (RFC 4506 §4.11)?**
-   RFC 4506 §4.11 defines `string` as ASCII, while modern XDR libraries (`stellar/go-xdr`, `xdr-codec`, `serde-xdr`) decode strings as UTF-8 (a superset of ASCII), and NFSv3 filenames are arbitrary bytes (`decode_opaque`). Should `decode_str`/`decode_string` validate UTF-8 as proposed, or also offer an ASCII-only helper / `Limits` toggle?
-2. **Trait names: `XdrEncode`/`XdrDecode` vs `Encode`/`Decode`?**
-   `XdrEncode`/`XdrDecode` avoid scope collisions when imported alongside other codec traits (mirroring `akku::json::{ToJson, FromJson}`). Shorter `akku::xdr::{Encode, Decode}` matches `Namespace.md` rule 2 (module-qualified names). Which naming style do you prefer?
-3. **Owned `XdrDecode: Sized` vs borrowed `XdrDecode<'a>`?**
-   Proposed `XdrDecode` decodes owned values (keeping NFSv3 struct definitions lifetime-free), while zero-copy borrows live on `Decoder<'a>` (`decode_opaque_slice`, `decode_str`). Is that split right, or should the trait itself carry `'a`?
-4. **Partial writes on `Encoder` error:**
-   If `Encoder` fails mid-struct (e.g., `TotalBytesLimit` or `LengthLimit` on field 3 of 5), should `Encoder` leave already-written bytes in `&mut Vec<u8>` (fast, zero rollback overhead, documented in rustdoc like `akku::hex::decode_to_slice`), or truncate back to `start_len` inside `encode_into` / `nest`?
-5. **Default `Limits` values:**
-   Are `max_opaque_len = 16 MiB`, `max_array_len = 65_536`, `max_total_bytes = 64 MiB`, `max_depth = 64` the right defaults for megaghost / NFSv3 and general callers, or should `max_opaque_len` be tighter (e.g., `4 MiB`) by default?
-6. **Macros in v1:**
-   Should `xdr_struct!` and `xdr_enum!` ship in v1 as `macro_rules!` sugar inside `akku::xdr`, or wait until `akku::nfs` exercises the manual API first?
+The former open questions were resolved at G1:
+
+1. **Strings:** `decode_str`/`decode_string` validate UTF-8 (superset of RFC 4506 ASCII). Raw bytes (NFSv3 filenames) go through `decode_opaque`. A strict ASCII helper stays a TODO item, not v1.
+2. **Trait names:** `XdrEncode` / `XdrDecode`.
+3. **Decode style:** owned `XdrDecode: Sized`; zero-copy borrows stay on `Decoder<'a>` (`decode_opaque_slice`, `decode_str`).
+4. **Partial writes:** on any `Encoder` error, `encode_into` / `nest` truncate the output back to `start_len`; no half-written records are left behind.
+5. **Default `Limits`:** `max_opaque_len = 16 MiB`, `max_array_len = 65_536`, `max_total_bytes = 64 MiB`, `max_depth = 64`.
+6. **Macros:** none in v1; `xdr_struct!` / `xdr_enum!` come after `akku::nfs` has exercised the manual API.
+7. **Discriminants:** `InvalidDiscriminant { value: i32 }` (XDR enums are signed 32-bit per RFC 4506 §4.3); unsigned discriminants are reported by bit pattern.
+8. **Wave:** `xdr` stays in Wave 2 together with `net`, `dns`, `quic`, `vfs`, and `nfs`.
