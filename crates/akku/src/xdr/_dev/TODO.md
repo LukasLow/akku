@@ -13,6 +13,7 @@
 - `xdr_struct!` / `xdr_enum!` declarative macros — after `akku::nfs` exercises the manual API. (origin: `DESIGN.md` §Decisions 6)
 - `#[derive(XdrEncode, XdrDecode)]` proc macros in `akku-drive` — only if declarative `xdr_struct!` / `xdr_enum!` prove insufficient once `akku::nfs` is built. (origin: `DESIGN.md` §Public API)
 - `.x` XDR language parser / code generator (`rpcgen` equivalent, RFC 4506 §6) — build-time codegen via `[build-dependencies]` `akku` if large XDR specs beyond NFSv3 are targeted. (origin: `DESIGN.md` §Non-goals / `jsgf/rust-xdr` `xdrgen`, Sun `rpcgen`)
+- `encode_into_with` — convenience wrapper combining `encode_into` with custom `Limits`; omitted in v1 (callers use `Encoder::with_limits(buf, limits).encode(value)`). (origin: G3 API review)
 - `akku::bytes::Bytes` zero-copy opaque decoder (`decode_opaque_bytes`) — O(1) `Bytes::slice` sub-views when decoding from an `akku::bytes::Bytes` buffer rather than `&[u8]`. (origin: `DESIGN.md` §Dependencies / `crates/akku/src/bytes/mod.rs`)
 
 ## Decoding variants

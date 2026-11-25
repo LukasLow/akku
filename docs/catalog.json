@@ -492,6 +492,20 @@
       "path": "crates/akku/src/ws"
     },
     {
+      "name": "xdr",
+      "family": null,
+      "status": "native",
+      "wasm32": true,
+      "feature": null,
+      "wave": 2,
+      "summary": "Strict big-endian XDR (RFC 4506 / STD 67) binary encoding and decoding with DoS limits.",
+      "owners": ["LukasLow"],
+      "tags": ["xdr", "encoding", "binary", "rpc", "rfc4506"],
+      "derived_tags": ["native-0dep", "wasm32"],
+      "source": null,
+      "path": "crates/akku/src/xdr"
+    },
+    {
       "name": "xml",
       "family": null,
       "status": "native",
