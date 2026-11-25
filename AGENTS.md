@@ -50,7 +50,7 @@ Details: [`PullRequest`](.agents/workflows/PullRequest.md) · [`Release`](.agent
 6. Module names are never Rust keywords (`task`, not `async`) and never shadow `::core`.
 7. Macros are sugar over a pleasant manual API.
 8. Zero dependencies by default. External code is a temporary `adapter` (pinned, reviewed, optional feature, hidden behind akku's API) or an MPL-2.0-compatible `fork` (no GPL).
-9. `unsafe` only where no safe way exists (FFI, OS syscalls, sockets, platform APIs), never for convenience or speed; only in `sys` submodules, each block with `// SAFETY:` ([`akku-unsafe`](.agents/skills/akku-unsafe/SKILL.md)). Today the crate is `#![forbid(unsafe_code)]` and no module needs `unsafe`.
+9. `unsafe` only where no safe way exists (FFI, OS syscalls, sockets, platform APIs), never for convenience or speed; only in `sys` submodules, each block with `// SAFETY:` ([`akku-unsafe`](.agents/skills/akku-unsafe/SKILL.md)). The crate is `#![deny(unsafe_code)]`; only files in `.github/unsafe-allowlist.txt` may opt in, enforced by `.github/scripts/check-unsafe.sh`.
 10. Crypto and TLS come from audited forks or pinned adapters, never from scratch. The module is `akku::tls` (`#[doc(alias = "ssl")]`); there is no `akku::ssl`.
 11. Native first: optimize for macOS, Windows, Linux, and mobile (iOS/Android) — fast and safe. `wasm32` is best-effort where it costs nothing on native (never slower or less safe); wasm special cases live in `#[cfg(target_arch = "wasm32")]` inside the module, and `akku::wasm` is the host/guest runtime only.
 12. Every public item has rustdoc (`#![deny(missing_docs)]`); all code, comments, and docs are English.

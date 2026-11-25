@@ -1,0 +1,44 @@
+THIRD-PARTY LICENSES
+====================
+
+akku is licensed under the Mozilla Public License 2.0 (see `LICENSE`).
+
+This file lists third-party open-source code adapted into akku (`fork` modules
+or portions of modules). Only MPL-2.0-compatible licenses (MIT, Apache-2.0,
+BSD, ISC, MPL-2.0; never GPL/AGPL) may be adapted. Keep the packaged copies in
+`crates/akku/THIRD_PARTY_LICENSES`, `crates/akku-drive/THIRD_PARTY_LICENSES`,
+and `crates/akku-cli/THIRD_PARTY_LICENSES` identical to this root file.
+
+Entry format
+------------
+
+Add one section per adapted upstream crate containing:
+
+- Crate name
+- Version or commit SHA
+- Upstream URL
+- SPDX license identifier
+- akku files derived from it (repo-relative paths)
+- Verbatim upstream copyright notice(s) and full license text
+- Verbatim `NOTICE` text (required when adapting Apache-2.0 code that includes
+  a `NOTICE` file)
+
+Per-file header template
+------------------------
+
+Every akku source file that adapts upstream code carries this header at the top
+of the file (adjusting the SPDX identifier and license name when the upstream
+license is not MIT, e.g. `Apache-2.0`):
+
+```rust
+// SPDX-License-Identifier: MPL-2.0 AND MIT
+// Portions adapted from <crate> v<version> (<url>):
+//   Copyright (c) <Year> <Authors>
+//   Licensed under the MIT License (see THIRD_PARTY_LICENSES).
+// Modifications for akku are licensed under the Mozilla Public License 2.0.
+```
+
+Entries
+-------
+
+(None yet.)

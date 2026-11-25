@@ -197,9 +197,31 @@ def write_notes(version: str, date: str) -> Path:
     return path
 
 
+PACKAGED_CRATES = ("akku", "akku-drive", "akku-cli")
+PACKAGED_LICENSES = ("LICENSE", "THIRD_PARTY_LICENSES")
+
+
+def check_licenses() -> None:
+    for filename in PACKAGED_LICENSES:
+        root_file = ROOT / filename
+        if not root_file.is_file():
+            fail(f"missing root {filename}")
+        expected = root_file.read_bytes()
+        for crate in PACKAGED_CRATES:
+            copy = ROOT / "crates" / crate / filename
+            if not copy.is_file():
+                fail(f"missing packaged copy {copy.relative_to(ROOT)}")
+            if copy.read_bytes() != expected:
+                fail(
+                    f"{copy.relative_to(ROOT)} differs from root {filename}; "
+                    "keep packaged copies byte-identical"
+                )
+
+
 def check() -> None:
     version = cargo_version()
     guard_version(version)
+    check_licenses()
     fragment_bumps()  # validates every fragment's kind and bump
     print(f"release: guard OK, workspace version {version}")
     notes = sorted(RELEASES.glob(f"v{version}-*.md")) if RELEASES.is_dir() else []

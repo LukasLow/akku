@@ -15,7 +15,7 @@ repository owner with:
 
 ## Security posture
 
-- `akku` forbids unsafe code (`#![forbid(unsafe_code)]`).
+- `akku` denies unsafe code (`#![deny(unsafe_code)]`); only allowlisted `sys` submodules for FFI/syscalls may opt in, every block carries a `// SAFETY:` comment, and CI enforces the allowlist.
 - The v0.0.1 HTTP backend is axum 0.8/tokio; TLS and crypto are not implemented
   by Akku itself.
 - Dependencies are pinned in the workspace and reviewed before release.

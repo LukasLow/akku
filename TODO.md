@@ -1,6 +1,6 @@
 # TODO.md — akku
 
-> **Current Snapshot:** **37 implemented modules** (+ `akku::diff` re-export = **38 / 87** entries from [`Namespace.md`](Namespace.md), **~84,400 LOC** pure Rust, `#![forbid(unsafe_code)]`, `#![deny(missing_docs)]`).
+> **Current Snapshot:** **37 implemented modules** (+ `akku::diff` re-export = **38 / 87** entries from [`Namespace.md`](Namespace.md), **~84,400 LOC** pure Rust, `#![deny(unsafe_code)]` (sys-only allowlist), `#![deny(missing_docs)]`).
 >
 > - **Wave 1:** 25 / 25 implemented (24 native zero-dep + `http` adapter)
 > - **Wave 2:** 11 / 17 implemented (`ws`, `sse`, `template`, `markdown`, `xml`, `yaml`, `text`+`diff`, `regex`, `archive`, `kv`, `cache`) — **Audit Bugfix Pass ✅ done (2026-11-24)**

@@ -105,7 +105,7 @@ Rules:
 
 ### `unsafe`
 
-`unsafe` is allowed only where no safe way exists (FFI, OS syscalls, sockets, platform APIs), never for convenience or speed, and only inside designated `sys` submodules with a `// SAFETY:` comment on every block. Today no module needs it and the crate is `#![forbid(unsafe_code)]`. Policy and mechanics: [AGENTS.md](AGENTS.md) rule 9 and [akku-unsafe](.agents/skills/akku-unsafe/SKILL.md).
+`unsafe` is allowed only where no safe way exists (FFI, OS syscalls, sockets, platform APIs), never for convenience or speed, and only inside allowlisted `sys` submodules (`#![allow(unsafe_code)]`) with a `// SAFETY:` comment on every block. The library crate enforces `#![deny(unsafe_code)]`, `#![deny(unsafe_op_in_unsafe_fn)]`, and `#![deny(clippy::undocumented_unsafe_blocks)]`, and CI enforces `.github/unsafe-allowlist.txt` (currently empty; no module uses `unsafe` yet). Policy and mechanics: [AGENTS.md](AGENTS.md) rule 9 and [akku-unsafe](.agents/skills/akku-unsafe/SKILL.md).
 
 ## 8. API principles
 
