@@ -71,6 +71,7 @@
 - [ ] CRC-32C (Castagnoli) — `archive::checksum` has CRC-32 (IEEE) only (Go `hash/crc32`); decide on a flat `checksum` module first.
 - [ ] `time` — IANA time zones with DST (Go `time`, `time/tzdata`); only fixed UTC offsets today.
 - [ ] `bytes` — LEB128/zigzag varints (Go `encoding/binary` `Uvarint`/`Varint`); the `meta.toml` overclaim is removed.
+- [ ] `std`-superset compliance follow-ups (`Namespace.md` §3): `akku::time::{Duration, Instant}` redefine `std::time` names (needs human decision: exempt `time` or rename); `akku::env::home_dir` shadows `std::env::home_dir`; add missing `std` re-exports in `fs`, `process`, and `env`.
 
 ---
 

@@ -76,7 +76,10 @@ The Rust linker plus LTO removes unused code from the final binary. Features are
 
 ### Native first
 
-akku is all-in-one and optimized for **native platforms** — macOS, Windows, Linux, and mobile (iOS/Android) — fast and absolutely safe. `wasm32` is **best-effort**: supported where it costs nothing on native, and never allowed to make a native code path slower or less safe. The `wasm32` CI check therefore stays optional as an early warning, while native checks are required ([`AGENTS.md`](AGENTS.md) §3 and rule 11).
+akku defines two platform tiers ([`AGENTS.md`](AGENTS.md) §3 and rule 11):
+
+- **Tier 1 (first-class):** macOS, Windows, Linux, iOS, and Android. Every module with OS-dependent behavior ships a native, fast, safe backend for all five in the same PR — no `Unsupported` stubs or Linux-only slices for Tier 1.
+- **Tier 2 (best-effort):** `wasm32` and other special cases, supported only where it costs nothing on Tier 1 (never slower or less safe). The `wasm32` CI check therefore stays optional as an early warning, while native checks are required.
 
 ### WASM model (strictly two-part)
 
