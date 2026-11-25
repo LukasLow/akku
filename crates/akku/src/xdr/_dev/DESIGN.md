@@ -491,7 +491,7 @@ The former open questions were resolved at G1:
 1. **Strings:** `decode_str`/`decode_string` validate UTF-8 (superset of RFC 4506 ASCII). Raw bytes (NFSv3 filenames) go through `decode_opaque`. A strict ASCII helper stays a TODO item, not v1.
 2. **Trait names:** `XdrEncode` / `XdrDecode`.
 3. **Decode style:** owned `XdrDecode: Sized`; zero-copy borrows stay on `Decoder<'a>` (`decode_opaque_slice`, `decode_str`).
-4. **Partial writes:** on any `Encoder` error, `encode_into` / `nest` truncate the output back to `start_len`; no half-written records are left behind. Clarified at G5: top-level `encode_into` / `encode_with` / `Encoder::encode` roll back to `start_len` and `nest` rolls back to its own entry checkpoint (on error or panic), while a failing primitive or bounded-field write appends nothing and keeps earlier writes in the same `Encoder`.
+4. **Partial writes:** on any `Encoder` error, `encode_into` / `nest` truncate the output back to `start_len`; no half-written records are left behind. Clarified at G5: top-level `encode_into` / `encode_with` roll back to `start_len`, `Encoder::encode` rolls back to the buffer length at the start of that call (its own checkpoint), and `nest` rolls back to its own entry checkpoint (on error or panic), while a failing primitive or bounded-field write appends nothing and keeps earlier writes in the same `Encoder`.
 5. **Default `Limits`:** `max_opaque_len = 16 MiB`, `max_array_len = 65_536`, `max_total_bytes = 64 MiB`, `max_depth = 64`.
 6. **Macros:** none in v1; `xdr_struct!` / `xdr_enum!` come after `akku::nfs` has exercised the manual API.
 7. **Discriminants:** `InvalidDiscriminant { value: i32 }` (XDR enums are signed 32-bit per RFC 4506 §4.3); unsigned discriminants are reported by bit pattern.
