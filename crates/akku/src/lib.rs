@@ -45,7 +45,11 @@
 //! akku = { version = "0.0.1", default-features = false }
 //! ```
 
-#![forbid(unsafe_code)]
+// `unsafe` is only allowed in allowlisted `sys` submodules (see
+// `.github/unsafe-allowlist.txt`), which opt in with `#![allow(unsafe_code)]`.
+#![deny(unsafe_code)]
+#![deny(unsafe_op_in_unsafe_fn)]
+#![deny(clippy::undocumented_unsafe_blocks)]
 #![deny(missing_docs)]
 
 pub mod algo;

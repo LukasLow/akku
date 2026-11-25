@@ -10,7 +10,7 @@ description = "Attribute macros for Akku: HTTP routes and the async entry point.
 keywords = ["macros", "http", "routes", "akku"]
 categories = ["development-tools::procedural-macro-helpers"]
 readme = "README.md"
-include = ["src/**", "Cargo.toml", "README.md"]
+include = ["src/**", "Cargo.toml", "README.md", "LICENSE", "THIRD_PARTY_LICENSES"]
 
 [lib]
 proc-macro = true

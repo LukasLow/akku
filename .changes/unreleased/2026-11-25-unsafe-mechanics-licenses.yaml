@@ -1,0 +1,3 @@
+kind: Changed
+body: "Switch `akku` from `#![forbid(unsafe_code)]` to `#![deny(unsafe_code)]` with `#![deny(unsafe_op_in_unsafe_fn)]`, `#![deny(clippy::undocumented_unsafe_blocks)]`, and a CI-enforced `sys`-only allowlist (still empty), and ship `LICENSE` and `THIRD_PARTY_LICENSES` in published crates."
+time: 2026-11-25T00:00:00Z

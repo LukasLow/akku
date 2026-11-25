@@ -7,14 +7,14 @@ description: akku's unsafe policy and mechanics. Use when code seems to need `un
 
 **Rule:** `unsafe` is allowed only where no safe way exists: FFI, OS syscalls, socket options, platform APIs that `std` does not expose. Convenience and speed never justify it; a safe `std` path, a slower safe algorithm, or an audited adapter crate comes first.
 
-**Today:** `crates/akku/src/lib.rs` has `#![forbid(unsafe_code)]` and no module contains `unsafe`. `forbid` cannot be overridden by `#[allow]`, so the first module that truly needs `unsafe` must first land the mechanics below.
+**Current state:** `crates/akku/src/lib.rs` sets `#![deny(unsafe_code)]`, `#![deny(unsafe_op_in_unsafe_fn)]`, and `#![deny(clippy::undocumented_unsafe_blocks)]`, and `.github/unsafe-allowlist.txt` is currently empty (no module uses `unsafe` yet). `akku-drive` and `akku-cli` remain `#![forbid(unsafe_code)]`.
 
-## Target mechanics
+## Mechanics
 
-1. Crate level: `#![deny(unsafe_code)]` replaces `#![forbid(unsafe_code)]`, in its own PR with Checker review and explicit human approval.
-2. `#[allow(unsafe_code)]` appears only on a designated `sys` submodule: `crates/akku/src/<module>/sys/` (or `src/os/<platform>/sys/`). Everything outside `sys` stays safe and calls `sys` through a safe wrapper.
+1. Crate level (`crates/akku/src/lib.rs`): `#![deny(unsafe_code)]`, `#![deny(unsafe_op_in_unsafe_fn)]`, and `#![deny(clippy::undocumented_unsafe_blocks)]`.
+2. `#![allow(unsafe_code)]` appears only inside an allowlisted `sys` submodule file: `crates/akku/src/<module>/sys/*.rs` (or `crates/akku/src/os/<platform>/sys/*.rs`). Everything outside `sys/` stays safe and calls `sys` through a safe wrapper.
 3. Every `unsafe` block and `unsafe fn` carries a `// SAFETY:` comment naming the invariant and why it holds here. Enforced by `#![deny(clippy::undocumented_unsafe_blocks)]` and `#![deny(unsafe_op_in_unsafe_fn)]`.
-4. CI enforces an allowlist of files that may contain `unsafe`: [`.github/unsafe-allowlist.txt`](../../../.github/unsafe-allowlist.txt), checked by `.github/scripts/check-unsafe.sh`. Adding a file to it requires Checker review and human approval in the PR.
+4. CI enforces an allowlist of `crates/.../sys/*.rs` files that may contain `unsafe` or `#![allow(unsafe_code)]`: [`.github/unsafe-allowlist.txt`](../../../.github/unsafe-allowlist.txt), checked by `.github/scripts/check-unsafe.sh`. Adding a file to it requires Checker review and human approval in the PR.
 
 ## Writing a `sys` module
 

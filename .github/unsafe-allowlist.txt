@@ -7,4 +7,5 @@
 # Policy: .agents/skills/akku-unsafe/SKILL.md. Only `sys` submodules qualify,
 # and adding a path needs Checker review and explicit human approval in the PR.
 #
-# Empty today: crates/akku/src/lib.rs is #![forbid(unsafe_code)].
+# Empty today: crates/akku/src/lib.rs uses #![deny(unsafe_code)] and no
+# module uses `unsafe` yet.

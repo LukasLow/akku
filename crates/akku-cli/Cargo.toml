@@ -10,7 +10,7 @@ description = "Command line helper for Akku projects."
 keywords = ["cli", "scaffold", "akku"]
 categories = ["command-line-utilities"]
 readme = "README.md"
-include = ["src/**", "Cargo.toml", "README.md"]
+include = ["src/**", "Cargo.toml", "README.md", "LICENSE", "THIRD_PARTY_LICENSES"]
 
 [[bin]]
 name = "akku"

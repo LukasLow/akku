@@ -48,7 +48,7 @@ level 2 = individual modules):
 | `akku::vid` | `frame`, `codec`, `mux`, `stream`, `device` | Separate from audio/image |
 | `akku::pic` | `png`, `jpeg`, `webp`, `bmp`, `canvas`, `filter` | Separate from audio/video (e.g. image editors) |
 | `akku::crypto` | `hash`, `aead`, `sign`, `kem`, `kdf`, `rand` | Avoids collision with `std::hash`; clear audit boundary |
-| `akku::time` | `clock`, `datetime`, `duration`, `timezone` | One coherent time and calendar model |
+| `akku::time` | `clock`, `datetime`, `duration`, `timezone`, `sleep`, `sleep_until`, `interval`, `timeout` | One coherent time, calendar, and async timer model |
 | `akku::units` | `distance`, `mass`, `time`, `temp`, `energy`, `pressure`, `speed` | Dimension system (`geo` stays separate and flat) |
 | `akku::math` | `decimal`, `linear`, `special`, `stat` | Numerics family |
 | `akku::phy` | `mechanics`, `relativity`, `quantum`, `thermo`, `cosmology` | Physics calculations |
@@ -70,7 +70,7 @@ Everything outside the families above lives directly under `akku::`.
 
 | Module | Contents / rule |
 |---|---|
-| `akku::net` | `std::net` superset: IP addresses, TCP/UDP/Unix sockets, socket options, async I/O (Wave 2) |
+| `akku::net` | `std::net` superset: IP addresses, async TCP/UDP/Unix sockets on the akku runtime, socket options (Wave 2) |
 | `akku::dns` | DNS resolver and message encoding (Wave 2) |
 | `akku::quic` | QUIC transport (Wave 2; the base for `http3`) |
 | `akku::xdr` | XDR encoding and decoding (RFC 4506) (Wave 2, megaghost-driven) |
@@ -137,9 +137,10 @@ Everything outside the families above lives directly under `akku::`.
 
 | Module | Contents / rule |
 |---|---|
-| `akku::task` | Async tasks, runtime, timeout, cancellation (not `async`) |
+| `akku::task` | Async tasks, runtime, cancellation (not `async`; timers and `timeout` live in `akku::time`) |
+| `akku::io` | `std::io` superset with async `AsyncRead`, `AsyncWrite`, `AsyncBufRead` traits |
 | `akku::sync` | Async/sync channels, semaphore, broadcast, watch (`std::sync` superset) |
-| `akku::schedule` | Intervals, cron, retry/backoff |
+| `akku::schedule` | Cron, retry/backoff |
 | `akku::cluster` | Node membership, gossip, discovery |
 | `akku::broker` | Pub/sub message broker |
 | `akku::fs` | `std::fs` superset + `walk`, `glob`, `tempfile`, `watch`, atomic writes |
@@ -218,7 +219,7 @@ on the protocol module (`akku::http::Request`, `akku::ws::Message`).
 
 ### 3. `std` name supersets
 
-Modules named like a `std` module (`fs`, `net`, `sync`, `time`, `env`,
+Modules named like a `std` module (`io`, `fs`, `net`, `sync`, `time`, `env`,
 `process`, `os`) are **supersets**, so `use akku::fs` works ergonomically next
 to or instead of `std::fs`.
 
@@ -246,6 +247,7 @@ Macros follow the same module rule:
 #[akku::http::get("/users/{id}")]
 #[akku::http::post("/users")]
 #[akku::http::main]
+#[akku::task::main]
 ```
 
 Not `#[akku::get]` or `#[akku::main]`. `akku-drive` stays an internal
