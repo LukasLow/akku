@@ -7,12 +7,19 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use akku::env::get_str;
 use akku::env::{
     cache_base_dir, cache_dir, config_base_dir, config_dir, data_base_dir, data_dir, get_bool,
-    get_bool_or, get_csv, get_list, get_parsed, get_parsed_or, get_paths, get_str_or, home_dir,
-    remove_var, require, set_var, MissingVar,
+    get_bool_or, get_csv, get_list, get_parsed, get_parsed_or, get_paths, get_str_or, remove_var,
+    require, set_var, MissingVar,
 };
 
 /// The separator `std::env::split_paths` splits on.
 const SEP: &str = if cfg!(windows) { ";" } else { ":" };
+
+/// `akku::env::home_dir` is `std::env::home_dir`, deprecated until Rust 1.87
+/// (MSRV is 1.85), so the allow keeps MSRV builds warning-free.
+#[allow(deprecated)]
+fn test_home() -> PathBuf {
+    akku::env::home_dir().expect("the test environment has a home")
+}
 
 /// Serialize all environment mutations across the test binaries' threads.
 fn lock() -> MutexGuard<'static, ()> {
@@ -151,7 +158,7 @@ fn require_reports_missing_variables() {
 #[cfg(target_os = "macos")]
 #[test]
 fn mac_uses_the_library_layout() {
-    let home = home_dir().expect("the test environment has a home");
+    let home = test_home();
     assert_eq!(config_base_dir(), home.join("Library/Application Support"));
     assert_eq!(data_base_dir(), home.join("Library/Application Support"));
     assert_eq!(cache_base_dir(), home.join("Library/Caches"));
@@ -173,7 +180,7 @@ fn unix_honors_absolute_xdg_overrides() {
     std::env::remove_var("XDG_DATA_HOME");
     std::env::remove_var("XDG_CACHE_HOME");
 
-    let home = home_dir().expect("the test environment has a home");
+    let home = test_home();
     // No overrides configured: the spec defaults apply.
     assert_eq!(config_base_dir(), home.join(".config"));
     assert_eq!(data_base_dir(), home.join(".local/share"));
@@ -209,11 +216,46 @@ fn app_dirs_are_only_computed_never_created() {
 fn std_env_reexports_are_usable() {
     let _guard = lock();
     set_var("AKKU_TEST_STD_REEXPORT", "v");
-    // `var`, `vars`, `split_paths`, `join_paths`.
+    // `var`, `vars`, `vars_os`, `args`, `args_os`, `split_paths`, `join_paths`, `consts`.
     assert_eq!(std::env::var("AKKU_TEST_STD_REEXPORT").unwrap(), "v");
-    assert!(akku::env::vars().any(|(key, _)| key == "AKKU_TEST_STD_REEXPORT"));
+    let vars_iter: akku::env::Vars = akku::env::vars();
+    assert!(vars_iter
+        .into_iter()
+        .any(|(key, _)| key == "AKKU_TEST_STD_REEXPORT"));
+    let vars_os_iter: akku::env::VarsOs = akku::env::vars_os();
+    assert!(vars_os_iter
+        .into_iter()
+        .any(|(key, _)| key == "AKKU_TEST_STD_REEXPORT"));
+
+    let _args: akku::env::Args = akku::env::args();
+    let _args_os: akku::env::ArgsOs = akku::env::args_os();
+    assert!(!akku::env::consts::OS.is_empty());
+    assert!(!akku::env::consts::ARCH.is_empty());
+
+    let missing_err: akku::env::VarError =
+        akku::env::var("AKKU_TEST_DEFINITELY_MISSING_VAR").unwrap_err();
+    assert_eq!(missing_err, std::env::VarError::NotPresent);
+
     let list = format!("/bin{SEP}/usr/local/bin");
-    let joined = akku::env::join_paths(akku::env::split_paths(&list)).unwrap_or_default();
+    let split: akku::env::SplitPaths<'_> = akku::env::split_paths(&list);
+    let joined = akku::env::join_paths(split).unwrap_or_default();
     assert_eq!(joined, list.as_str());
+
+    // Joining a path that embeds a disallowed character (`:` on Unix, `"` on Windows) triggers JoinPathsError.
+    let invalid_entry = if cfg!(windows) {
+        r#"bad"entry"#
+    } else {
+        "bad:entry"
+    };
+    let join_err: akku::env::JoinPathsError = akku::env::join_paths([invalid_entry]).unwrap_err();
+    assert!(!join_err.to_string().is_empty());
+
+    // `akku::env::home_dir` is the exact `std::env::home_dir` function.
+    #[allow(deprecated)] // MSRV 1.85 compatibility; un-deprecated in Rust 1.87.
+    let std_home = std::env::home_dir();
+    #[allow(deprecated)]
+    let akku_home = akku::env::home_dir();
+    assert_eq!(akku_home, std_home);
+
     remove_var("AKKU_TEST_STD_REEXPORT");
 }

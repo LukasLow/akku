@@ -12,7 +12,7 @@ use akku::fs::TempDir;
 use akku::kv::file::WAL_MAGIC;
 use akku::kv::redis::{RedisClient, RespLimits, RespValue};
 use akku::kv::{BatchOp, FileStore, KvError, KvLimits, KvStore, MemoryStore};
-use akku::time::{Duration as AkkuDuration, MockClock, OffsetDateTime};
+use akku::time::{MockClock, OffsetDateTime, SignedDuration};
 
 fn make_clock() -> MockClock {
     let start = OffsetDateTime::from_unix_timestamp(1_700_000_000, 0).unwrap();
@@ -65,11 +65,11 @@ fn memory_store_ttl_with_mock_clock() {
         .unwrap();
     store.set("persistent", b"forever").unwrap();
 
-    clock.advance(AkkuDuration::from_secs(9));
+    clock.advance(SignedDuration::from_secs(9));
     assert!(store.exists("ephemeral").unwrap());
     assert_eq!(store.get("ephemeral").unwrap(), Some(b"secret".to_vec()));
 
-    clock.advance(AkkuDuration::from_secs(2));
+    clock.advance(SignedDuration::from_secs(2));
     assert!(!store.exists("ephemeral").unwrap());
     assert_eq!(store.get("ephemeral").unwrap(), None);
     assert_eq!(store.get("persistent").unwrap(), Some(b"forever".to_vec()));
@@ -79,7 +79,7 @@ fn memory_store_ttl_with_mock_clock() {
         .set_ex("reset_me", b"v1", Duration::from_secs(5))
         .unwrap();
     store.set("reset_me", b"v2").unwrap();
-    clock.advance(AkkuDuration::from_secs(20));
+    clock.advance(SignedDuration::from_secs(20));
     assert_eq!(store.get("reset_me").unwrap(), Some(b"v2".to_vec()));
 }
 
@@ -92,7 +92,7 @@ fn memory_store_purge_expired() {
     store.set_ex("b", b"2", Duration::from_secs(10)).unwrap();
     store.set_ex("c", b"3", Duration::from_secs(20)).unwrap();
 
-    clock.advance(AkkuDuration::from_secs(12));
+    clock.advance(SignedDuration::from_secs(12));
     assert_eq!(store.purge_expired(), 2);
     assert_eq!(store.len(), 1);
     assert_eq!(store.get("c").unwrap(), Some(b"3".to_vec()));
@@ -111,7 +111,7 @@ fn memory_store_scan_prefix_and_scan_range() {
     store.set("appe:1", b"other").unwrap();
     store.set("agn:1", b"before").unwrap();
 
-    clock.advance(AkkuDuration::from_secs(6));
+    clock.advance(SignedDuration::from_secs(6));
 
     let prefix_rows = store.scan_prefix("app:").unwrap();
     assert_eq!(
@@ -216,14 +216,14 @@ fn file_store_ttl_persistence_across_reopen() {
     }
 
     // Advance clock 15s and reopen: "short" is already expired and discarded on replay.
-    clock.advance(AkkuDuration::from_secs(15));
+    clock.advance(SignedDuration::from_secs(15));
     let reopened = FileStore::open_with_clock(&wal_path, clock.clone()).unwrap();
     assert_eq!(reopened.get("short").unwrap(), None);
     assert_eq!(reopened.get("long").unwrap(), Some(b"60s".to_vec()));
     assert_eq!(reopened.get("forever").unwrap(), Some(b"inf".to_vec()));
 
     // Advance another 50s while open: "long" expires lazily.
-    clock.advance(AkkuDuration::from_secs(50));
+    clock.advance(SignedDuration::from_secs(50));
     assert_eq!(reopened.get("long").unwrap(), None);
     assert!(!reopened.exists("long").unwrap());
     assert_eq!(reopened.len().unwrap(), 1);

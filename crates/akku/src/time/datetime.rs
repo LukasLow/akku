@@ -7,7 +7,7 @@ use std::hash::{Hash, Hasher};
 use std::str::FromStr;
 use std::time::SystemTime;
 
-use super::duration::Duration;
+use super::duration::SignedDuration;
 use super::timezone::{parse_two_digits, UtcOffset};
 use super::{ParseError, TimeError};
 
@@ -510,8 +510,8 @@ impl DateTime {
         (self.unix_timestamp() as i128) * NANOS_PER_SEC + (self.time.nanosecond() as i128)
     }
 
-    /// Adds a signed [`Duration`] to this `DateTime`, returning `None` on overflow.
-    pub fn checked_add(&self, duration: Duration) -> Option<Self> {
+    /// Adds a signed [`SignedDuration`] to this `DateTime`, returning `None` on overflow.
+    pub fn checked_add(&self, duration: SignedDuration) -> Option<Self> {
         let total_nanos = self
             .unix_timestamp_nanos()
             .checked_add(duration.as_nanos())?;
@@ -520,8 +520,8 @@ impl DateTime {
         Self::from_unix_timestamp(secs, nanos).ok()
     }
 
-    /// Subtracts a signed [`Duration`] from this `DateTime`, returning `None` on overflow.
-    pub fn checked_sub(&self, duration: Duration) -> Option<Self> {
+    /// Subtracts a signed [`SignedDuration`] from this `DateTime`, returning `None` on overflow.
+    pub fn checked_sub(&self, duration: SignedDuration) -> Option<Self> {
         let total_nanos = self
             .unix_timestamp_nanos()
             .checked_sub(duration.as_nanos())?;
@@ -568,22 +568,7 @@ impl OffsetDateTime {
 
     /// Returns the current system wall-clock time in UTC.
     pub fn now_utc() -> Self {
-        match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-            Ok(dur) => {
-                let secs = i64::try_from(dur.as_secs()).unwrap_or(i64::MAX);
-                Self::from_unix_timestamp(secs, dur.subsec_nanos())
-                    .expect("system time within representable range")
-            }
-            Err(err) => {
-                let dur = err.duration();
-                let total_nanos =
-                    -(i128::from(dur.as_secs()) * NANOS_PER_SEC + i128::from(dur.subsec_nanos()));
-                let secs = total_nanos.div_euclid(NANOS_PER_SEC) as i64;
-                let nanos = total_nanos.rem_euclid(NANOS_PER_SEC) as u32;
-                Self::from_unix_timestamp(secs, nanos)
-                    .expect("system time within representable range")
-            }
-        }
+        Self::try_from(SystemTime::now()).expect("system time within representable range")
     }
 
     /// Creates a UTC `OffsetDateTime` from Unix seconds and subsecond nanoseconds (`0..1_000_000_000`).
@@ -657,26 +642,26 @@ impl OffsetDateTime {
         self.offset
     }
 
-    /// Adds a signed [`Duration`], preserving the current [`UtcOffset`].
-    pub fn checked_add(&self, duration: Duration) -> Option<Self> {
+    /// Adds a signed [`SignedDuration`], preserving the current [`UtcOffset`].
+    pub fn checked_add(&self, duration: SignedDuration) -> Option<Self> {
         self.datetime
             .checked_add(duration)
             .map(|dt| Self::new(dt, self.offset))
     }
 
-    /// Subtracts a signed [`Duration`], preserving the current [`UtcOffset`].
-    pub fn checked_sub(&self, duration: Duration) -> Option<Self> {
+    /// Subtracts a signed [`SignedDuration`], preserving the current [`UtcOffset`].
+    pub fn checked_sub(&self, duration: SignedDuration) -> Option<Self> {
         self.datetime
             .checked_sub(duration)
             .map(|dt| Self::new(dt, self.offset))
     }
 
-    /// Returns the signed [`Duration`] elapsed from `earlier` to `self`.
+    /// Returns the signed [`SignedDuration`] elapsed from `earlier` to `self`.
     ///
     /// If `earlier` is later than `self`, the returned duration is negative.
-    pub fn duration_since(&self, earlier: Self) -> Duration {
+    pub fn duration_since(&self, earlier: Self) -> SignedDuration {
         let diff = self.unix_timestamp_nanos() - earlier.unix_timestamp_nanos();
-        Duration::from_total_nanos(diff).expect("duration between timestamps overflowed")
+        SignedDuration::from_total_nanos(diff).expect("duration between timestamps overflowed")
     }
 
     /// Formats this timestamp according to RFC 3339 (for example, `"2024-06-01T12:00:00Z"`).
@@ -764,6 +749,52 @@ impl OffsetDateTime {
         };
 
         Ok(Self::new(DateTime::new(date, time), offset))
+    }
+}
+
+impl TryFrom<SystemTime> for OffsetDateTime {
+    type Error = TimeError;
+
+    fn try_from(value: SystemTime) -> Result<Self, Self::Error> {
+        match value.duration_since(SystemTime::UNIX_EPOCH) {
+            Ok(dur) => {
+                let secs = i64::try_from(dur.as_secs()).map_err(|_| TimeError::OutOfRange)?;
+                Self::from_unix_timestamp(secs, dur.subsec_nanos())
+            }
+            Err(err) => {
+                let dur = err.duration();
+                let total_nanos =
+                    -(i128::from(dur.as_secs()) * NANOS_PER_SEC + i128::from(dur.subsec_nanos()));
+                let secs = i64::try_from(total_nanos.div_euclid(NANOS_PER_SEC))
+                    .map_err(|_| TimeError::OutOfRange)?;
+                let nanos = total_nanos.rem_euclid(NANOS_PER_SEC) as u32;
+                Self::from_unix_timestamp(secs, nanos)
+            }
+        }
+    }
+}
+
+impl TryFrom<OffsetDateTime> for SystemTime {
+    type Error = TimeError;
+
+    fn try_from(value: OffsetDateTime) -> Result<Self, Self::Error> {
+        let secs = value.unix_timestamp();
+        let nanos = value.time().nanosecond();
+        if secs >= 0 {
+            let dur = std::time::Duration::new(secs as u64, nanos);
+            SystemTime::UNIX_EPOCH
+                .checked_add(dur)
+                .ok_or(TimeError::OutOfRange)
+        } else {
+            let abs_nanos = value.unix_timestamp_nanos().unsigned_abs();
+            let dur_secs = u64::try_from(abs_nanos / (NANOS_PER_SEC as u128))
+                .map_err(|_| TimeError::OutOfRange)?;
+            let dur_nanos = (abs_nanos % (NANOS_PER_SEC as u128)) as u32;
+            let dur = std::time::Duration::new(dur_secs, dur_nanos);
+            SystemTime::UNIX_EPOCH
+                .checked_sub(dur)
+                .ok_or(TimeError::OutOfRange)
+        }
     }
 }
 

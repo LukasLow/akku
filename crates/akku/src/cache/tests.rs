@@ -6,7 +6,7 @@ use std::thread;
 use std::time::Duration;
 
 use akku::cache::{Cache, EvictionReason, SyncCache};
-use akku::time::{Duration as AkkuDuration, MockClock, OffsetDateTime};
+use akku::time::{MockClock, OffsetDateTime, SignedDuration};
 
 fn make_clock() -> MockClock {
     let start = OffsetDateTime::from_unix_timestamp(1_700_000_000, 0).unwrap();
@@ -136,10 +136,10 @@ fn cache_default_ttl_expiration_with_mock_clock() {
         .build();
 
     cache.insert("k", "v");
-    clock.advance(AkkuDuration::from_secs(9));
+    clock.advance(SignedDuration::from_secs(9));
     assert_eq!(cache.get(&"k"), Some("v"));
 
-    clock.advance(AkkuDuration::from_secs(2));
+    clock.advance(SignedDuration::from_secs(2));
     assert_eq!(cache.get(&"k"), None);
     assert_eq!(cache.len(), 0);
     assert_eq!(cache.stats().expirations, 1);
@@ -157,16 +157,16 @@ fn cache_per_entry_ttl_overrides_default_ttl() {
     cache.insert_with_ttl("short", 2, Duration::from_secs(5));
     cache.insert_with_ttl("long", 3, Duration::from_secs(60));
 
-    clock.advance(AkkuDuration::from_secs(6));
+    clock.advance(SignedDuration::from_secs(6));
     assert_eq!(cache.get(&"short"), None);
     assert_eq!(cache.get(&"default"), Some(1));
     assert_eq!(cache.get(&"long"), Some(3));
 
-    clock.advance(AkkuDuration::from_secs(25));
+    clock.advance(SignedDuration::from_secs(25));
     assert_eq!(cache.get(&"default"), None);
     assert_eq!(cache.get(&"long"), Some(3));
 
-    clock.advance(AkkuDuration::from_secs(30));
+    clock.advance(SignedDuration::from_secs(30));
     assert_eq!(cache.get(&"long"), None);
 }
 
@@ -190,7 +190,7 @@ fn cache_purge_expired_reaps_only_stale_entries() {
     cache.insert_with_ttl("t20", 4, Duration::from_secs(20));
     cache.insert("forever", 5);
 
-    clock.advance(AkkuDuration::from_secs(12));
+    clock.advance(SignedDuration::from_secs(12));
     let purged = cache.purge_expired();
     assert_eq!(purged, 2);
     assert_eq!(cache.len(), 3);
@@ -217,7 +217,7 @@ fn cache_overwrite_expired_entry_returns_none_and_records_expiration() {
         .build();
 
     cache.insert_with_ttl("k", 10, Duration::from_secs(5));
-    clock.advance(AkkuDuration::from_secs(6));
+    clock.advance(SignedDuration::from_secs(6));
 
     // Overwriting an already-expired entry returns None (not the stale 10) and emits Expired.
     assert_eq!(cache.insert("k", 20), None);
@@ -234,7 +234,7 @@ fn cache_remove_expired_entry_returns_none() {
     let clock = make_clock();
     let cache = Cache::builder(4).clock(clock.clone()).build();
     cache.insert_with_ttl("k", 99, Duration::from_secs(5));
-    clock.advance(AkkuDuration::from_secs(10));
+    clock.advance(SignedDuration::from_secs(10));
 
     assert_eq!(cache.remove(&"k"), None);
     assert_eq!(cache.stats().expirations, 1);
@@ -245,7 +245,7 @@ fn cache_peek_expired_entry_evicts_and_returns_none() {
     let clock = make_clock();
     let cache = Cache::builder(4).clock(clock.clone()).build();
     cache.insert_with_ttl("k", 99, Duration::from_secs(5));
-    clock.advance(AkkuDuration::from_secs(5));
+    clock.advance(SignedDuration::from_secs(5));
 
     assert_eq!(cache.peek(&"k"), None);
     assert_eq!(cache.len(), 0);
@@ -278,7 +278,7 @@ fn cache_get_or_insert_with_computes_only_on_miss_or_expired() {
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 
     // Advance past TTL: closure must run again.
-    clock.advance(AkkuDuration::from_secs(11));
+    clock.advance(SignedDuration::from_secs(11));
     let v3 = cache.get_or_insert_with("key", || {
         calls.fetch_add(1, Ordering::SeqCst);
         300
@@ -324,7 +324,7 @@ fn cache_eviction_hook_all_reasons() {
     cache.remove(&"c");
     // TTL expiration of "t"
     cache.insert_with_ttl("t", 99, Duration::from_secs(3));
-    clock.advance(AkkuDuration::from_secs(4));
+    clock.advance(SignedDuration::from_secs(4));
     cache.purge_expired();
     // Clear removal of "b"
     cache.clear();
@@ -413,7 +413,7 @@ fn cache_capacity_one_edge_case() {
     assert_eq!(cache.get(&"b"), Some(3));
     assert_eq!(cache.len(), 1);
 
-    clock.advance(AkkuDuration::from_secs(6));
+    clock.advance(SignedDuration::from_secs(6));
     assert_eq!(cache.get(&"b"), None);
     assert_eq!(cache.len(), 0);
 }
@@ -529,7 +529,7 @@ fn sync_cache_wrapper_full_api() {
     assert_eq!(sync_cache.peek(&"a"), Some(1));
     assert_eq!(sync_cache.get(&"a"), Some(1));
 
-    clock.advance(AkkuDuration::from_secs(6));
+    clock.advance(SignedDuration::from_secs(6));
     assert_eq!(sync_cache.purge_expired(), 1);
     assert_eq!(sync_cache.len(), 2);
 
@@ -572,7 +572,7 @@ fn cache_concurrent_multithread_stress() {
                     }
                     _ => {
                         if i % 30 == 0 {
-                            clk.advance(AkkuDuration::from_secs(3));
+                            clk.advance(SignedDuration::from_secs(3));
                             let _ = c.purge_expired();
                         } else {
                             let _ = c.remove(&key);

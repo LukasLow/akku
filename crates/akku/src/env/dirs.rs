@@ -15,42 +15,6 @@
 
 use std::path::PathBuf;
 
-/// The user's home directory as configured in the environment.
-///
-/// Returns `$HOME` when it is set and non-empty (`USERPROFILE` on Windows);
-/// there is no further fallback, notably no `getpwuid` lookup and no call to
-/// the deprecated [`std::env::home_dir`].
-///
-/// # Examples
-///
-/// ```
-/// use std::path::PathBuf;
-///
-/// let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
-/// assert_eq!(
-///     akku::env::home_dir(),
-///     std::env::var_os(var).map(PathBuf::from)
-/// );
-/// assert!(akku::env::home_dir().is_some());
-/// ```
-pub fn home_dir() -> Option<PathBuf> {
-    let value = home_var()?;
-    if value.is_empty() {
-        return None;
-    }
-    Some(PathBuf::from(value))
-}
-
-#[cfg(not(windows))]
-fn home_var() -> Option<std::ffi::OsString> {
-    std::env::var_os("HOME")
-}
-
-#[cfg(windows)]
-fn home_var() -> Option<std::ffi::OsString> {
-    std::env::var_os("USERPROFILE")
-}
-
 /// Base directory for user-specific configuration files.
 ///
 /// On macOS: `~/Library/Application Support`. Elsewhere:
@@ -113,9 +77,14 @@ fn base_dir(_mac_relative: &str, override_var: &str, fallback: &str) -> PathBuf 
     xdg_dir(override_var, fallback)
 }
 
+#[allow(deprecated)] // std::env::home_dir was un-deprecated in Rust 1.87; MSRV is 1.85.
+fn std_home_dir() -> Option<PathBuf> {
+    std::env::home_dir()
+}
+
 #[cfg(target_os = "macos")]
 fn join_home(relative: &str) -> PathBuf {
-    match home_dir() {
+    match std_home_dir() {
         Some(home) => home.join(relative),
         None => PathBuf::from(relative),
     }
@@ -130,7 +99,7 @@ fn xdg_dir(override_var: &str, fallback: &str) -> PathBuf {
             return candidate;
         }
     }
-    match home_dir() {
+    match std_home_dir() {
         Some(home) => home.join(fallback),
         None => PathBuf::from(fallback),
     }

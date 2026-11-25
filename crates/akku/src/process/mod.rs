@@ -33,8 +33,8 @@ pub(crate) mod pipeline;
 pub use cmd::{Cmd, CmdError, CmdOutput};
 pub use pipeline::{Pipeline, PipelineOutput};
 
-// The everyday std::process surface, re-exported on purpose.
+// The full stable std::process surface, re-exported explicitly.
 pub use std::process::{
-    exit, id, Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitCode, ExitStatus, Output,
-    Stdio,
+    abort, exit, id, Child, ChildStderr, ChildStdin, ChildStdout, Command, CommandArgs,
+    CommandEnvs, ExitCode, ExitStatus, Output, Stdio, Termination,
 };

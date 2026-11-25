@@ -1,4 +1,4 @@
-use akku::time::Duration;
+use akku::time::SignedDuration;
 use akku::units::{
     Energy, Length, Mass, Pressure, Quantity, Speed, TempDelta, Temperature, TimeSpan, UnitError,
 };
@@ -168,13 +168,13 @@ fn temperature_conversions_affine_math_and_absolute_zero_guard() {
 
 #[test]
 fn timespan_lossless_round_trip_with_duration_down_to_1ns() {
-    let one_ns = Duration::from_nanos(1);
+    let one_ns = SignedDuration::from_nanos(1);
     let span_one_ns = TimeSpan::from(one_ns);
     assert_eq!(span_one_ns.to_duration(), Some(one_ns));
 
     // A large duration plus 1 nanosecond cannot be represented losslessly in f64,
-    // yet TimeSpan::from(Duration) preserves it down to the exact nanosecond.
-    let huge_plus_1ns = Duration::new(10_000_000_000, 1);
+    // yet TimeSpan::from(SignedDuration) preserves it down to the exact nanosecond.
+    let huge_plus_1ns = SignedDuration::new(10_000_000_000, 1);
     let span_huge = TimeSpan::from(huge_plus_1ns);
     assert_eq!(span_huge.to_duration(), Some(huge_plus_1ns));
 
@@ -182,18 +182,21 @@ fn timespan_lossless_round_trip_with_duration_down_to_1ns() {
     let combined = span_huge + span_one_ns;
     assert_eq!(
         combined.to_duration(),
-        Some(Duration::new(10_000_000_000, 2))
+        Some(SignedDuration::new(10_000_000_000, 2))
     );
     let subtracted = combined - span_one_ns;
     assert_eq!(subtracted.to_duration(), Some(huge_plus_1ns));
 
     // Negative exact duration round-trip.
-    let neg_ns = Duration::new(-5, -1);
+    let neg_ns = SignedDuration::new(-5, -1);
     assert_eq!(TimeSpan::from(neg_ns).to_duration(), Some(neg_ns));
 
     // Float-backed TimeSpan conversion.
     let float_span = TimeSpan::from_millis(1250.0);
-    assert_eq!(float_span.to_duration(), Some(Duration::from_millis(1250)));
+    assert_eq!(
+        float_span.to_duration(),
+        Some(SignedDuration::from_millis(1250))
+    );
     assert_eq!(TimeSpan::from_secs(f64::INFINITY).to_duration(), None);
 }
 

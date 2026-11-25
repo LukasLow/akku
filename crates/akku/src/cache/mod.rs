@@ -16,9 +16,8 @@
 //! # Examples
 //!
 //! ```
-//! use std::time::Duration;
 //! use akku::cache::{Cache, EvictionReason};
-//! use akku::time::{Duration as AkkuDuration, MockClock, OffsetDateTime};
+//! use akku::time::{Duration, MockClock, OffsetDateTime, SignedDuration};
 //!
 //! let start = OffsetDateTime::from_unix_timestamp(1_700_000_000, 0).unwrap();
 //! let clock = MockClock::new(start);
@@ -36,7 +35,7 @@
 //! assert_eq!(cache.get(&"b"), None);
 //! assert_eq!(cache.get(&"a"), Some(1));
 //!
-//! clock.advance(AkkuDuration::from_secs(61));
+//! clock.advance(SignedDuration::from_secs(61));
 //! assert_eq!(cache.get(&"a"), None); // expired
 //! ```
 
@@ -46,7 +45,7 @@ use std::hash::Hash;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::time::{Clock, Duration as AkkuDuration, Instant, SystemClock};
+use crate::time::{Clock, ClockInstant, SignedDuration, SystemClock};
 
 const NONE: usize = usize::MAX;
 
@@ -105,7 +104,7 @@ pub struct CacheBuilder<K, V> {
     capacity: usize,
     max_weight: Option<u64>,
     weigher: Option<Weigher<K, V>>,
-    default_ttl: Option<AkkuDuration>,
+    default_ttl: Option<SignedDuration>,
     clock: Arc<dyn Clock>,
     on_evict: Option<EvictHook<K, V>>,
 }
@@ -216,8 +215,8 @@ where
     }
 }
 
-fn std_to_akku_duration(d: Duration) -> AkkuDuration {
-    AkkuDuration::try_from(d).unwrap_or(AkkuDuration::MAX)
+fn std_to_akku_duration(d: Duration) -> SignedDuration {
+    SignedDuration::try_from(d).unwrap_or(SignedDuration::MAX)
 }
 
 #[derive(Debug)]
@@ -227,7 +226,7 @@ struct Entry<K, V> {
     weight: u64,
     prev: usize,
     next: usize,
-    expiry: Option<(Instant, AkkuDuration)>,
+    expiry: Option<(ClockInstant, SignedDuration)>,
 }
 
 #[derive(Debug)]
@@ -269,9 +268,9 @@ where
         }
     }
 
-    fn is_expired_at(entry: &Entry<K, V>, now_mono: Instant) -> bool {
+    fn is_expired_at(entry: &Entry<K, V>, now_mono: ClockInstant) -> bool {
         if let Some((inserted_at, ttl)) = entry.expiry {
-            if ttl <= AkkuDuration::ZERO {
+            if ttl <= SignedDuration::ZERO {
                 return true;
             }
             if let Some(elapsed) = now_mono.checked_duration_since(inserted_at) {
@@ -375,7 +374,7 @@ struct CacheShared<K, V> {
     capacity: usize,
     max_weight: Option<u64>,
     weigher: Option<Weigher<K, V>>,
-    default_ttl: Option<AkkuDuration>,
+    default_ttl: Option<SignedDuration>,
     clock: Arc<dyn Clock>,
     on_evict: Option<EvictHook<K, V>>,
     inner: Mutex<CacheInner<K, V>>,
@@ -590,7 +589,7 @@ where
         self.insert_internal(key, value, Some(std_to_akku_duration(ttl)))
     }
 
-    fn insert_internal(&self, key: K, value: V, ttl: Option<AkkuDuration>) -> Option<V> {
+    fn insert_internal(&self, key: K, value: V, ttl: Option<SignedDuration>) -> Option<V> {
         let now = self.shared.clock.monotonic();
         let weight = self.shared.compute_weight(&key, &value);
         let expiry = ttl.map(|d| (now, d));
