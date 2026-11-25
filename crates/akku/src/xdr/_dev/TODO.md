@@ -18,7 +18,3 @@
 
 ## Decoding variants
 - Lenient mode (`Limits::allow_nonzero_padding`, `allow_nonzero_bool`) — only add if interoperability with a buggy real-world NFS/ONC-RPC peer requires relaxing RFC 4506 §3 / §4.4. (origin: `DESIGN.md` §Non-goals / `libtirpc` `src/xdr.c:533,600`, `nfsserve/src/xdr.rs:48,128`)
-
-## G4 implementation cleanup
-- Remove `no_run` from all rustdoc examples in `src/xdr/mod.rs` so `cargo test -p akku --doc xdr` runs every example. (origin: G3 stub scaffold)
-- Remove `#![allow(unused_variables, clippy::ptr_arg)]` from `src/xdr/mod.rs` once stub bodies are replaced with the real implementation. (origin: G3 stub scaffold)

@@ -70,7 +70,7 @@
 //!
 //! Round-tripping standard types with [`encode`] and [`decode`]:
 //!
-//! ```no_run
+//! ```
 //! use akku::xdr::{self, FixedOpaque, Opaque};
 //!
 //! let bytes = xdr::encode("hello")?;
@@ -90,7 +90,7 @@
 //!
 //! Imperative encoding and zero-copy decoding with [`Encoder`] and [`Decoder`]:
 //!
-//! ```no_run
+//! ```
 //! use akku::xdr::{Decoder, Encoder};
 //!
 //! let mut buf = Vec::new();
@@ -105,11 +105,26 @@
 //! # Ok::<(), akku::xdr::Error>(())
 //! ```
 
-// G3 stub-only allows (remove in G4 when bodies are implemented).
-#![allow(unused_variables, clippy::ptr_arg)]
-
 use std::fmt;
-use std::marker::PhantomData;
+
+const DEFAULT_MAX_OPAQUE_LEN: u32 = 16 * 1024 * 1024;
+const DEFAULT_MAX_ARRAY_LEN: u32 = 65_536;
+const DEFAULT_MAX_TOTAL_BYTES: usize = 64 * 1024 * 1024;
+const DEFAULT_MAX_DEPTH: usize = 64;
+const MAX_PREALLOC: usize = 256;
+const MAX_PREALLOC_BYTES: usize = 4096;
+const ZERO_PAD: [u8; 4] = [0u8; 4];
+
+#[inline]
+fn initial_array_capacity<T>(count: usize, remaining_bytes: usize) -> usize {
+    let elem_size = std::mem::size_of::<T>();
+    if elem_size == 0 {
+        return 0;
+    }
+    let max_by_wire = remaining_bytes / 4;
+    let max_by_mem = (MAX_PREALLOC_BYTES / elem_size).max(1);
+    count.min(MAX_PREALLOC).min(max_by_wire).min(max_by_mem)
+}
 
 /// Convenience result alias for [`akku::xdr`](self) operations.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -121,27 +136,27 @@ pub type Result<T> = std::result::Result<T, Error>;
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// assert_eq!(akku::xdr::padding_len(0), 0);
 /// assert_eq!(akku::xdr::padding_len(1), 3);
 /// assert_eq!(akku::xdr::padding_len(5), 3);
 /// assert_eq!(akku::xdr::padding_len(8), 0);
 /// ```
 pub const fn padding_len(len: usize) -> usize {
-    todo!()
+    (4 - (len & 3)) & 3
 }
 
 /// Returns `len + padding_len(len)`, or `None` if rounding up overflows `usize`.
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// assert_eq!(akku::xdr::padded_len(0), Some(0));
 /// assert_eq!(akku::xdr::padded_len(5), Some(8));
 /// assert_eq!(akku::xdr::padded_len(usize::MAX), None);
 /// ```
 pub const fn padded_len(len: usize) -> Option<usize> {
-    todo!()
+    len.checked_add(padding_len(len))
 }
 
 /// Resource limits enforced by [`Encoder`] and [`Decoder`] against untrusted
@@ -156,7 +171,7 @@ pub const fn padded_len(len: usize) -> Option<usize> {
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// use akku::xdr::Limits;
 ///
 /// let limits = Limits::new()
@@ -198,27 +213,36 @@ impl Default for Limits {
 impl Limits {
     /// Creates a `Limits` value initialized with the default bounds.
     pub const fn new() -> Self {
-        todo!()
+        Self {
+            max_opaque_len: DEFAULT_MAX_OPAQUE_LEN,
+            max_array_len: DEFAULT_MAX_ARRAY_LEN,
+            max_total_bytes: DEFAULT_MAX_TOTAL_BYTES,
+            max_depth: DEFAULT_MAX_DEPTH,
+        }
     }
 
     /// Sets [`Self::max_opaque_len`] and returns the updated limits.
-    pub const fn with_max_opaque_len(self, max: u32) -> Self {
-        todo!()
+    pub const fn with_max_opaque_len(mut self, max: u32) -> Self {
+        self.max_opaque_len = max;
+        self
     }
 
     /// Sets [`Self::max_array_len`] and returns the updated limits.
-    pub const fn with_max_array_len(self, max: u32) -> Self {
-        todo!()
+    pub const fn with_max_array_len(mut self, max: u32) -> Self {
+        self.max_array_len = max;
+        self
     }
 
     /// Sets [`Self::max_total_bytes`] and returns the updated limits.
-    pub const fn with_max_total_bytes(self, max: usize) -> Self {
-        todo!()
+    pub const fn with_max_total_bytes(mut self, max: usize) -> Self {
+        self.max_total_bytes = max;
+        self
     }
 
     /// Sets [`Self::max_depth`] and returns the updated limits.
-    pub const fn with_max_depth(self, max: usize) -> Self {
-        todo!()
+    pub const fn with_max_depth(mut self, max: usize) -> Self {
+        self.max_depth = max;
+        self
     }
 }
 
@@ -229,7 +253,7 @@ impl Limits {
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// use akku::xdr::{self, Error};
 ///
 /// assert_eq!(
@@ -333,7 +357,58 @@ pub enum Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!("Error::fmt")
+        match self {
+            Self::UnexpectedEof {
+                offset,
+                needed,
+                remaining,
+            } => write!(
+                f,
+                "unexpected EOF at offset {offset}: needed {needed} bytes, {remaining} remaining"
+            ),
+            Self::TrailingBytes { offset, remaining } => write!(
+                f,
+                "trailing bytes at offset {offset}: {remaining} bytes remaining"
+            ),
+            Self::NonZeroPadding { offset, byte } => write!(
+                f,
+                "non-zero XDR padding byte 0x{byte:02x} at offset {offset}"
+            ),
+            Self::InvalidBool { offset, value } => {
+                write!(f, "invalid XDR boolean value {value} at offset {offset}")
+            }
+            Self::InvalidEnum { offset, value } => {
+                write!(f, "invalid XDR enum value {value} at offset {offset}")
+            }
+            Self::InvalidDiscriminant { offset, value } => {
+                write!(
+                    f,
+                    "invalid XDR union discriminant {value} at offset {offset}"
+                )
+            }
+            Self::InvalidUtf8 {
+                offset,
+                valid_up_to,
+            } => write!(
+                f,
+                "invalid UTF-8 in XDR string at offset {offset} (valid up to {valid_up_to} bytes)"
+            ),
+            Self::LengthLimit { offset, len, limit } => write!(
+                f,
+                "XDR length {len} exceeds limit {limit} at offset {offset}"
+            ),
+            Self::TotalBytesLimit { offset, limit } => write!(
+                f,
+                "XDR total bytes limit {limit} exceeded at offset {offset}"
+            ),
+            Self::DepthLimit { offset, limit } => write!(
+                f,
+                "XDR nesting depth limit {limit} exceeded at offset {offset}"
+            ),
+            Self::LengthOverflow { offset, len } => {
+                write!(f, "XDR length {len} overflows usize at offset {offset}")
+            }
+        }
     }
 }
 
@@ -349,29 +424,112 @@ impl std::error::Error for Error {}
 /// buffer back to `start_len`, preserving the prefix.
 #[derive(Debug)]
 pub struct Encoder<'a> {
-    _marker: PhantomData<&'a mut Vec<u8>>,
+    buf: &'a mut Vec<u8>,
+    start_len: usize,
+    limits: Limits,
+    depth: usize,
 }
 
 impl<'a> Encoder<'a> {
     /// Creates an encoder appending to `buf` with default [`Limits`].
     pub fn new(buf: &'a mut Vec<u8>) -> Self {
-        todo!("Encoder::new")
+        Self::with_limits(buf, Limits::new())
     }
 
     /// Creates an encoder appending to `buf` with custom [`Limits`].
     pub fn with_limits(buf: &'a mut Vec<u8>, limits: Limits) -> Self {
-        todo!("Encoder::with_limits")
+        let start_len = buf.len();
+        Self {
+            buf,
+            start_len,
+            limits,
+            depth: 0,
+        }
     }
 
     /// Returns the number of bytes written by this encoder since creation
     /// (excluding any prefix already in `buf`).
     pub fn written(&self) -> usize {
-        todo!("Encoder::written")
+        self.buf.len().saturating_sub(self.start_len)
     }
 
     /// Returns the active [`Limits`] for this encoder.
     pub fn limits(&self) -> Limits {
-        todo!("Encoder::limits")
+        self.limits
+    }
+
+    #[cold]
+    fn fail<T>(&mut self, err: Error) -> Result<T> {
+        self.buf.truncate(self.start_len);
+        Err(err)
+    }
+
+    #[inline]
+    fn reserve_bytes(&mut self, additional: usize) -> Result<()> {
+        let offset = self.written();
+        let Some(new_total) = offset.checked_add(additional) else {
+            return self.fail(Error::LengthOverflow {
+                offset,
+                len: additional,
+            });
+        };
+        if new_total > self.limits.max_total_bytes {
+            return self.fail(Error::TotalBytesLimit {
+                offset,
+                limit: self.limits.max_total_bytes,
+            });
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn write_bytes(&mut self, bytes: &[u8]) -> Result<()> {
+        self.reserve_bytes(bytes.len())?;
+        self.buf.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    fn encode_opaque_inner(&mut self, bytes: &[u8], max_len: Option<u32>) -> Result<()> {
+        let offset = self.written();
+        let effective_limit = match max_len {
+            Some(m) => m.min(self.limits.max_opaque_len),
+            None => self.limits.max_opaque_len,
+        };
+        let Ok(len_u32) = u32::try_from(bytes.len()) else {
+            return self.fail(Error::LengthLimit {
+                offset,
+                len: bytes.len(),
+                limit: effective_limit as usize,
+            });
+        };
+        if len_u32 > effective_limit {
+            return self.fail(Error::LengthLimit {
+                offset,
+                len: bytes.len(),
+                limit: effective_limit as usize,
+            });
+        }
+        let Some(padded) = padded_len(bytes.len()) else {
+            return self.fail(Error::LengthOverflow {
+                offset,
+                len: bytes.len(),
+            });
+        };
+        let Some(total) = padded.checked_add(4) else {
+            return self.fail(Error::LengthOverflow {
+                offset,
+                len: bytes.len(),
+            });
+        };
+        self.reserve_bytes(total)?;
+        let pad = padding_len(bytes.len());
+        self.buf.reserve(total);
+        self.buf.extend_from_slice(&len_u32.to_be_bytes());
+        self.buf.extend_from_slice(bytes);
+        if pad != 0 {
+            self.buf.extend_from_slice(&ZERO_PAD[..pad]);
+        }
+        Ok(())
     }
 
     /// Encodes a signed 32-bit integer (`int`, RFC 4506 §4.1).
@@ -381,7 +539,7 @@ impl<'a> Encoder<'a> {
     /// Returns [`Error::TotalBytesLimit`] if writing 4 bytes would exceed
     /// [`Limits::max_total_bytes`].
     pub fn encode_int(&mut self, v: i32) -> Result<()> {
-        todo!("Encoder::encode_int")
+        self.write_bytes(&v.to_be_bytes())
     }
 
     /// Encodes an unsigned 32-bit integer (`unsigned int`, RFC 4506 §4.2).
@@ -391,7 +549,7 @@ impl<'a> Encoder<'a> {
     /// Returns [`Error::TotalBytesLimit`] if writing 4 bytes would exceed
     /// [`Limits::max_total_bytes`].
     pub fn encode_uint(&mut self, v: u32) -> Result<()> {
-        todo!("Encoder::encode_uint")
+        self.write_bytes(&v.to_be_bytes())
     }
 
     /// Encodes a signed 32-bit enumeration value (`enum`, RFC 4506 §4.3).
@@ -401,7 +559,7 @@ impl<'a> Encoder<'a> {
     /// Returns [`Error::TotalBytesLimit`] if writing 4 bytes would exceed
     /// [`Limits::max_total_bytes`].
     pub fn encode_enum(&mut self, v: i32) -> Result<()> {
-        todo!("Encoder::encode_enum")
+        self.encode_int(v)
     }
 
     /// Encodes a boolean (`bool`, RFC 4506 §4.4) as `0` (`false`) or `1`
@@ -412,7 +570,7 @@ impl<'a> Encoder<'a> {
     /// Returns [`Error::TotalBytesLimit`] if writing 4 bytes would exceed
     /// [`Limits::max_total_bytes`].
     pub fn encode_bool(&mut self, v: bool) -> Result<()> {
-        todo!("Encoder::encode_bool")
+        self.encode_uint(u32::from(v))
     }
 
     /// Encodes a signed 64-bit integer (`hyper`, RFC 4506 §4.5).
@@ -422,7 +580,7 @@ impl<'a> Encoder<'a> {
     /// Returns [`Error::TotalBytesLimit`] if writing 8 bytes would exceed
     /// [`Limits::max_total_bytes`].
     pub fn encode_hyper(&mut self, v: i64) -> Result<()> {
-        todo!("Encoder::encode_hyper")
+        self.write_bytes(&v.to_be_bytes())
     }
 
     /// Encodes an unsigned 64-bit integer (`unsigned hyper`, RFC 4506 §4.5).
@@ -432,7 +590,7 @@ impl<'a> Encoder<'a> {
     /// Returns [`Error::TotalBytesLimit`] if writing 8 bytes would exceed
     /// [`Limits::max_total_bytes`].
     pub fn encode_uhyper(&mut self, v: u64) -> Result<()> {
-        todo!("Encoder::encode_uhyper")
+        self.write_bytes(&v.to_be_bytes())
     }
 
     /// Encodes an IEEE 754 32-bit float (`float`, RFC 4506 §4.6) in big-endian
@@ -443,7 +601,7 @@ impl<'a> Encoder<'a> {
     /// Returns [`Error::TotalBytesLimit`] if writing 4 bytes would exceed
     /// [`Limits::max_total_bytes`].
     pub fn encode_float(&mut self, v: f32) -> Result<()> {
-        todo!("Encoder::encode_float")
+        self.write_bytes(&v.to_bits().to_be_bytes())
     }
 
     /// Encodes an IEEE 754 64-bit float (`double`, RFC 4506 §4.7) in big-endian
@@ -454,12 +612,12 @@ impl<'a> Encoder<'a> {
     /// Returns [`Error::TotalBytesLimit`] if writing 8 bytes would exceed
     /// [`Limits::max_total_bytes`].
     pub fn encode_double(&mut self, v: f64) -> Result<()> {
-        todo!("Encoder::encode_double")
+        self.write_bytes(&v.to_bits().to_be_bytes())
     }
 
     /// Encodes XDR `void` (RFC 4506 §4.16), writing zero bytes.
     pub fn encode_void(&mut self) -> Result<()> {
-        todo!("Encoder::encode_void")
+        Ok(())
     }
 
     /// Encodes fixed-length opaque data (`opaque[n]`, RFC 4506 §4.9), followed
@@ -471,7 +629,21 @@ impl<'a> Encoder<'a> {
     /// 4-byte multiple overflows `usize`, or [`Error::TotalBytesLimit`] if the
     /// padded write would exceed [`Limits::max_total_bytes`].
     pub fn encode_fixed_opaque(&mut self, bytes: &[u8]) -> Result<()> {
-        todo!("Encoder::encode_fixed_opaque")
+        let offset = self.written();
+        let Some(total) = padded_len(bytes.len()) else {
+            return self.fail(Error::LengthOverflow {
+                offset,
+                len: bytes.len(),
+            });
+        };
+        self.reserve_bytes(total)?;
+        let pad = padding_len(bytes.len());
+        self.buf.reserve(total);
+        self.buf.extend_from_slice(bytes);
+        if pad != 0 {
+            self.buf.extend_from_slice(&ZERO_PAD[..pad]);
+        }
+        Ok(())
     }
 
     /// Encodes variable-length opaque data (`opaque<>`, RFC 4506 §4.10) bounded
@@ -484,7 +656,7 @@ impl<'a> Encoder<'a> {
     /// overflow, or [`Error::TotalBytesLimit`] if writing would exceed
     /// [`Limits::max_total_bytes`].
     pub fn encode_opaque(&mut self, bytes: &[u8]) -> Result<()> {
-        todo!("Encoder::encode_opaque")
+        self.encode_opaque_inner(bytes, None)
     }
 
     /// Encodes variable-length opaque data (`opaque<max_len>`, RFC 4506 §4.10)
@@ -497,7 +669,7 @@ impl<'a> Encoder<'a> {
     /// [`Error::TotalBytesLimit`] if writing would exceed
     /// [`Limits::max_total_bytes`].
     pub fn encode_opaque_bounded(&mut self, bytes: &[u8], max_len: u32) -> Result<()> {
-        todo!("Encoder::encode_opaque_bounded")
+        self.encode_opaque_inner(bytes, Some(max_len))
     }
 
     /// Encodes a UTF-8 string (`string<>`, RFC 4506 §4.11) bounded by
@@ -510,7 +682,7 @@ impl<'a> Encoder<'a> {
     /// overflow, or [`Error::TotalBytesLimit`] if writing would exceed
     /// [`Limits::max_total_bytes`].
     pub fn encode_str(&mut self, s: &str) -> Result<()> {
-        todo!("Encoder::encode_str")
+        self.encode_opaque_inner(s.as_bytes(), None)
     }
 
     /// Encodes a UTF-8 string (`string<max_len>`, RFC 4506 §4.11) bounded by
@@ -523,7 +695,7 @@ impl<'a> Encoder<'a> {
     /// [`Error::TotalBytesLimit`] if writing would exceed
     /// [`Limits::max_total_bytes`].
     pub fn encode_str_bounded(&mut self, s: &str, max_len: u32) -> Result<()> {
-        todo!("Encoder::encode_str_bounded")
+        self.encode_opaque_inner(s.as_bytes(), Some(max_len))
     }
 
     /// Runs `f` inside a depth-guarded compound scope.
@@ -537,7 +709,20 @@ impl<'a> Encoder<'a> {
     /// Returns [`Error::DepthLimit`] if entering the scope would exceed
     /// [`Limits::max_depth`], or any error returned by `f`.
     pub fn nest<R>(&mut self, f: impl FnOnce(&mut Self) -> Result<R>) -> Result<R> {
-        todo!("Encoder::nest")
+        if self.depth >= self.limits.max_depth {
+            let offset = self.written();
+            return self.fail(Error::DepthLimit {
+                offset,
+                limit: self.limits.max_depth,
+            });
+        }
+        self.depth += 1;
+        let res = f(self);
+        self.depth -= 1;
+        if res.is_err() {
+            self.buf.truncate(self.start_len);
+        }
+        res
     }
 
     /// Encodes a fixed-length array (`T[n]`, RFC 4506 §4.12) inside a
@@ -549,9 +734,14 @@ impl<'a> Encoder<'a> {
     pub fn encode_fixed_array<T>(
         &mut self,
         items: &[T],
-        encode_item: impl FnMut(&mut Self, &T) -> Result<()>,
+        mut encode_item: impl FnMut(&mut Self, &T) -> Result<()>,
     ) -> Result<()> {
-        todo!("Encoder::encode_fixed_array")
+        self.nest(|enc| {
+            for item in items {
+                encode_item(enc, item)?;
+            }
+            Ok(())
+        })
     }
 
     /// Encodes a variable-length array (`T<max_count>`, RFC 4506 §4.13) inside
@@ -568,9 +758,34 @@ impl<'a> Encoder<'a> {
         &mut self,
         items: &[T],
         max_count: Option<u32>,
-        encode_item: impl FnMut(&mut Self, &T) -> Result<()>,
+        mut encode_item: impl FnMut(&mut Self, &T) -> Result<()>,
     ) -> Result<()> {
-        todo!("Encoder::encode_array")
+        self.nest(|enc| {
+            let offset = enc.written();
+            let effective_limit = match max_count {
+                Some(m) => m.min(enc.limits.max_array_len),
+                None => enc.limits.max_array_len,
+            };
+            let Ok(count_u32) = u32::try_from(items.len()) else {
+                return Err(Error::LengthLimit {
+                    offset,
+                    len: items.len(),
+                    limit: effective_limit as usize,
+                });
+            };
+            if count_u32 > effective_limit {
+                return Err(Error::LengthLimit {
+                    offset,
+                    len: items.len(),
+                    limit: effective_limit as usize,
+                });
+            }
+            enc.encode_uint(count_u32)?;
+            for item in items {
+                encode_item(enc, item)?;
+            }
+            Ok(())
+        })
     }
 
     /// Encodes RFC 4506 §4.19 optional-data (`false` or `true` followed by the
@@ -585,7 +800,13 @@ impl<'a> Encoder<'a> {
         value: Option<&T>,
         encode_val: impl FnOnce(&mut Self, &T) -> Result<()>,
     ) -> Result<()> {
-        todo!("Encoder::encode_option")
+        self.nest(|enc| match value {
+            None => enc.encode_bool(false),
+            Some(v) => {
+                enc.encode_bool(true)?;
+                encode_val(enc, v)
+            }
+        })
     }
 
     /// Encodes a slice iteratively as an RFC 4506 §4.19 optional-data linked
@@ -601,9 +822,34 @@ impl<'a> Encoder<'a> {
         &mut self,
         items: &[T],
         max_count: Option<u32>,
-        encode_item: impl FnMut(&mut Self, &T) -> Result<()>,
+        mut encode_item: impl FnMut(&mut Self, &T) -> Result<()>,
     ) -> Result<()> {
-        todo!("Encoder::encode_list")
+        self.nest(|enc| {
+            let offset = enc.written();
+            let effective_limit = match max_count {
+                Some(m) => m.min(enc.limits.max_array_len),
+                None => enc.limits.max_array_len,
+            };
+            let Ok(count_u32) = u32::try_from(items.len()) else {
+                return Err(Error::LengthLimit {
+                    offset,
+                    len: items.len(),
+                    limit: effective_limit as usize,
+                });
+            };
+            if count_u32 > effective_limit {
+                return Err(Error::LengthLimit {
+                    offset,
+                    len: items.len(),
+                    limit: effective_limit as usize,
+                });
+            }
+            for item in items {
+                enc.encode_bool(true)?;
+                encode_item(enc, item)?;
+            }
+            enc.encode_bool(false)
+        })
     }
 
     /// Encodes a discriminated union with a signed 32-bit discriminant
@@ -618,7 +864,10 @@ impl<'a> Encoder<'a> {
         discriminant: i32,
         encode_arm: impl FnOnce(&mut Self) -> Result<()>,
     ) -> Result<()> {
-        todo!("Encoder::encode_union_i32")
+        self.nest(|enc| {
+            enc.encode_int(discriminant)?;
+            encode_arm(enc)
+        })
     }
 
     /// Encodes a discriminated union with an unsigned 32-bit discriminant
@@ -633,7 +882,10 @@ impl<'a> Encoder<'a> {
         discriminant: u32,
         encode_arm: impl FnOnce(&mut Self) -> Result<()>,
     ) -> Result<()> {
-        todo!("Encoder::encode_union_u32")
+        self.nest(|enc| {
+            enc.encode_uint(discriminant)?;
+            encode_arm(enc)
+        })
     }
 
     /// Encodes `value` using its [`XdrEncode`] implementation.
@@ -642,7 +894,11 @@ impl<'a> Encoder<'a> {
     ///
     /// Propagates any error returned by [`XdrEncode::encode`].
     pub fn encode<T: XdrEncode + ?Sized>(&mut self, value: &T) -> Result<()> {
-        todo!("Encoder::encode")
+        let res = value.encode(self);
+        if res.is_err() {
+            self.buf.truncate(self.start_len);
+        }
+        res
     }
 }
 
@@ -655,43 +911,82 @@ impl<'a> Encoder<'a> {
 /// from the input slice.
 #[derive(Debug)]
 pub struct Decoder<'a> {
-    _marker: PhantomData<&'a [u8]>,
+    input: &'a [u8],
+    pos: usize,
+    limits: Limits,
+    depth: usize,
 }
 
 impl<'a> Decoder<'a> {
     /// Creates a decoder over `input` with default [`Limits`].
     pub fn new(input: &'a [u8]) -> Self {
-        todo!("Decoder::new")
+        Self::with_limits(input, Limits::new())
     }
 
     /// Creates a decoder over `input` with custom [`Limits`].
     pub fn with_limits(input: &'a [u8], limits: Limits) -> Self {
-        todo!("Decoder::with_limits")
+        Self {
+            input,
+            pos: 0,
+            limits,
+            depth: 0,
+        }
     }
 
     /// Returns the current byte offset from the start of the input slice.
     pub fn position(&self) -> usize {
-        todo!("Decoder::position")
+        self.pos
     }
 
     /// Returns the number of unread bytes remaining in the input slice.
     pub fn remaining(&self) -> usize {
-        todo!("Decoder::remaining")
+        self.input.len().saturating_sub(self.pos)
     }
 
     /// Returns `true` if no unread bytes remain.
     pub fn is_empty(&self) -> bool {
-        todo!("Decoder::is_empty")
+        self.pos >= self.input.len()
     }
 
     /// Returns the unread tail of the input slice.
     pub fn rest(&self) -> &'a [u8] {
-        todo!("Decoder::rest")
+        self.input.get(self.pos..).unwrap_or(&[])
     }
 
     /// Returns the active [`Limits`] for this decoder.
     pub fn limits(&self) -> Limits {
-        todo!("Decoder::limits")
+        self.limits
+    }
+
+    #[inline]
+    fn read_bytes(&mut self, n: usize) -> Result<&'a [u8]> {
+        let offset = self.pos;
+        let end = offset
+            .checked_add(n)
+            .ok_or(Error::LengthOverflow { offset, len: n })?;
+        if end > self.limits.max_total_bytes {
+            return Err(Error::TotalBytesLimit {
+                offset,
+                limit: self.limits.max_total_bytes,
+            });
+        }
+        let Some(slice) = self.input.get(offset..end) else {
+            return Err(Error::UnexpectedEof {
+                offset,
+                needed: n,
+                remaining: self.remaining(),
+            });
+        };
+        self.pos = end;
+        Ok(slice)
+    }
+
+    #[inline]
+    fn read_array<const N: usize>(&mut self) -> Result<[u8; N]> {
+        let bytes = self.read_bytes(N)?;
+        let mut out = [0u8; N];
+        out.copy_from_slice(bytes);
+        Ok(out)
     }
 
     /// Verifies that all input bytes have been consumed.
@@ -700,7 +995,14 @@ impl<'a> Decoder<'a> {
     ///
     /// Returns [`Error::TrailingBytes`] if [`Self::remaining`] is non-zero.
     pub fn finish(self) -> Result<()> {
-        todo!("Decoder::finish")
+        let remaining = self.remaining();
+        if remaining != 0 {
+            return Err(Error::TrailingBytes {
+                offset: self.pos,
+                remaining,
+            });
+        }
+        Ok(())
     }
 
     /// Decodes a signed 32-bit integer (`int`, RFC 4506 §4.1).
@@ -709,7 +1011,7 @@ impl<'a> Decoder<'a> {
     ///
     /// Returns [`Error::UnexpectedEof`] or [`Error::TotalBytesLimit`].
     pub fn decode_int(&mut self) -> Result<i32> {
-        todo!("Decoder::decode_int")
+        Ok(i32::from_be_bytes(self.read_array::<4>()?))
     }
 
     /// Decodes an unsigned 32-bit integer (`unsigned int`, RFC 4506 §4.2).
@@ -718,7 +1020,7 @@ impl<'a> Decoder<'a> {
     ///
     /// Returns [`Error::UnexpectedEof`] or [`Error::TotalBytesLimit`].
     pub fn decode_uint(&mut self) -> Result<u32> {
-        todo!("Decoder::decode_uint")
+        Ok(u32::from_be_bytes(self.read_array::<4>()?))
     }
 
     /// Decodes a signed 32-bit enumeration word (`enum`, RFC 4506 §4.3) and
@@ -729,7 +1031,9 @@ impl<'a> Decoder<'a> {
     /// Returns [`Error::InvalidEnum`] if `from_i32` returns `None`, or
     /// [`Error::UnexpectedEof`] / [`Error::TotalBytesLimit`].
     pub fn decode_enum<E>(&mut self, from_i32: impl FnOnce(i32) -> Option<E>) -> Result<E> {
-        todo!("Decoder::decode_enum")
+        let offset = self.pos;
+        let value = self.decode_int()?;
+        from_i32(value).ok_or(Error::InvalidEnum { offset, value })
     }
 
     /// Decodes a strict boolean (`bool`, RFC 4506 §4.4): `0` yields `false` and
@@ -740,7 +1044,12 @@ impl<'a> Decoder<'a> {
     /// Returns [`Error::InvalidBool`] for any wire word other than `0` or `1`,
     /// or [`Error::UnexpectedEof`] / [`Error::TotalBytesLimit`].
     pub fn decode_bool(&mut self) -> Result<bool> {
-        todo!("Decoder::decode_bool")
+        let offset = self.pos;
+        match self.decode_int()? {
+            0 => Ok(false),
+            1 => Ok(true),
+            value => Err(Error::InvalidBool { offset, value }),
+        }
     }
 
     /// Decodes a signed 64-bit integer (`hyper`, RFC 4506 §4.5).
@@ -749,7 +1058,7 @@ impl<'a> Decoder<'a> {
     ///
     /// Returns [`Error::UnexpectedEof`] or [`Error::TotalBytesLimit`].
     pub fn decode_hyper(&mut self) -> Result<i64> {
-        todo!("Decoder::decode_hyper")
+        Ok(i64::from_be_bytes(self.read_array::<8>()?))
     }
 
     /// Decodes an unsigned 64-bit integer (`unsigned hyper`, RFC 4506 §4.5).
@@ -758,7 +1067,7 @@ impl<'a> Decoder<'a> {
     ///
     /// Returns [`Error::UnexpectedEof`] or [`Error::TotalBytesLimit`].
     pub fn decode_uhyper(&mut self) -> Result<u64> {
-        todo!("Decoder::decode_uhyper")
+        Ok(u64::from_be_bytes(self.read_array::<8>()?))
     }
 
     /// Decodes an IEEE 754 32-bit float (`float`, RFC 4506 §4.6).
@@ -767,7 +1076,7 @@ impl<'a> Decoder<'a> {
     ///
     /// Returns [`Error::UnexpectedEof`] or [`Error::TotalBytesLimit`].
     pub fn decode_float(&mut self) -> Result<f32> {
-        todo!("Decoder::decode_float")
+        Ok(f32::from_bits(self.decode_uint()?))
     }
 
     /// Decodes an IEEE 754 64-bit float (`double`, RFC 4506 §4.7).
@@ -776,12 +1085,12 @@ impl<'a> Decoder<'a> {
     ///
     /// Returns [`Error::UnexpectedEof`] or [`Error::TotalBytesLimit`].
     pub fn decode_double(&mut self) -> Result<f64> {
-        todo!("Decoder::decode_double")
+        Ok(f64::from_bits(self.decode_uhyper()?))
     }
 
     /// Decodes XDR `void` (RFC 4506 §4.16), consuming zero bytes.
     pub fn decode_void(&mut self) -> Result<()> {
-        todo!("Decoder::decode_void")
+        Ok(())
     }
 
     /// Borrows `len` fixed-length opaque bytes (`opaque[len]`, RFC 4506 §4.9)
@@ -793,7 +1102,18 @@ impl<'a> Decoder<'a> {
     /// Returns [`Error::LengthOverflow`], [`Error::TotalBytesLimit`],
     /// [`Error::UnexpectedEof`], or [`Error::NonZeroPadding`].
     pub fn decode_fixed_opaque_slice(&mut self, len: usize) -> Result<&'a [u8]> {
-        todo!("Decoder::decode_fixed_opaque_slice")
+        let start = self.pos;
+        let total = padded_len(len).ok_or(Error::LengthOverflow { offset: start, len })?;
+        let bytes = self.read_bytes(total)?;
+        for (i, &byte) in bytes[len..].iter().enumerate() {
+            if byte != 0 {
+                return Err(Error::NonZeroPadding {
+                    offset: start + len + i,
+                    byte,
+                });
+            }
+        }
+        Ok(&bytes[..len])
     }
 
     /// Decodes a fixed-length opaque array (`opaque[N]`, RFC 4506 §4.9) and
@@ -804,7 +1124,10 @@ impl<'a> Decoder<'a> {
     /// Returns [`Error::LengthOverflow`], [`Error::TotalBytesLimit`],
     /// [`Error::UnexpectedEof`], or [`Error::NonZeroPadding`].
     pub fn decode_fixed_opaque<const N: usize>(&mut self) -> Result<[u8; N]> {
-        todo!("Decoder::decode_fixed_opaque")
+        let slice = self.decode_fixed_opaque_slice(N)?;
+        let mut out = [0u8; N];
+        out.copy_from_slice(slice);
+        Ok(out)
     }
 
     /// Decodes `dst.len()` fixed-length opaque bytes into `dst` and verifies
@@ -815,7 +1138,9 @@ impl<'a> Decoder<'a> {
     /// Returns [`Error::LengthOverflow`], [`Error::TotalBytesLimit`],
     /// [`Error::UnexpectedEof`], or [`Error::NonZeroPadding`].
     pub fn decode_fixed_opaque_into(&mut self, dst: &mut [u8]) -> Result<()> {
-        todo!("Decoder::decode_fixed_opaque_into")
+        let slice = self.decode_fixed_opaque_slice(dst.len())?;
+        dst.copy_from_slice(slice);
+        Ok(())
     }
 
     /// Borrows variable-length opaque bytes (`opaque<>`, RFC 4506 §4.10)
@@ -830,7 +1155,24 @@ impl<'a> Decoder<'a> {
     /// [`Error::TotalBytesLimit`], [`Error::UnexpectedEof`], or
     /// [`Error::NonZeroPadding`].
     pub fn decode_opaque_slice(&mut self, max_len: Option<u32>) -> Result<&'a [u8]> {
-        todo!("Decoder::decode_opaque_slice")
+        let item_offset = self.pos;
+        let len_u32 = self.decode_uint()?;
+        let effective_limit = match max_len {
+            Some(m) => m.min(self.limits.max_opaque_len),
+            None => self.limits.max_opaque_len,
+        };
+        if len_u32 > effective_limit {
+            return Err(Error::LengthLimit {
+                offset: item_offset,
+                len: len_u32 as usize,
+                limit: effective_limit as usize,
+            });
+        }
+        let len = usize::try_from(len_u32).map_err(|_| Error::LengthOverflow {
+            offset: item_offset,
+            len: usize::MAX,
+        })?;
+        self.decode_fixed_opaque_slice(len)
     }
 
     /// Decodes variable-length opaque bytes (`opaque<>`, RFC 4506 §4.10) into
@@ -842,7 +1184,7 @@ impl<'a> Decoder<'a> {
     /// [`Error::TotalBytesLimit`], [`Error::UnexpectedEof`], or
     /// [`Error::NonZeroPadding`].
     pub fn decode_opaque(&mut self, max_len: Option<u32>) -> Result<Vec<u8>> {
-        todo!("Decoder::decode_opaque")
+        self.decode_opaque_slice(max_len).map(<[u8]>::to_vec)
     }
 
     /// Borrows a UTF-8 string (`string<>`, RFC 4506 §4.11) directly from the
@@ -854,7 +1196,12 @@ impl<'a> Decoder<'a> {
     /// [`Error::TotalBytesLimit`], [`Error::UnexpectedEof`],
     /// [`Error::NonZeroPadding`], or [`Error::InvalidUtf8`].
     pub fn decode_str(&mut self, max_len: Option<u32>) -> Result<&'a str> {
-        todo!("Decoder::decode_str")
+        let payload_offset = self.pos.saturating_add(4);
+        let bytes = self.decode_opaque_slice(max_len)?;
+        std::str::from_utf8(bytes).map_err(|err| Error::InvalidUtf8 {
+            offset: payload_offset,
+            valid_up_to: err.valid_up_to(),
+        })
     }
 
     /// Decodes a UTF-8 string (`string<>`, RFC 4506 §4.11) into an owned
@@ -866,7 +1213,7 @@ impl<'a> Decoder<'a> {
     /// [`Error::TotalBytesLimit`], [`Error::UnexpectedEof`],
     /// [`Error::NonZeroPadding`], or [`Error::InvalidUtf8`].
     pub fn decode_string(&mut self, max_len: Option<u32>) -> Result<String> {
-        todo!("Decoder::decode_string")
+        self.decode_str(max_len).map(str::to_owned)
     }
 
     /// Runs `f` inside a depth-guarded compound scope.
@@ -879,7 +1226,16 @@ impl<'a> Decoder<'a> {
     /// Returns [`Error::DepthLimit`] if entering the scope would exceed
     /// [`Limits::max_depth`], or any error returned by `f`.
     pub fn nest<R>(&mut self, f: impl FnOnce(&mut Self) -> Result<R>) -> Result<R> {
-        todo!("Decoder::nest")
+        if self.depth >= self.limits.max_depth {
+            return Err(Error::DepthLimit {
+                offset: self.pos,
+                limit: self.limits.max_depth,
+            });
+        }
+        self.depth += 1;
+        let res = f(self);
+        self.depth -= 1;
+        res
     }
 
     /// Decodes a fixed-length array (`T[N]`, RFC 4506 §4.12) inside a
@@ -892,7 +1248,10 @@ impl<'a> Decoder<'a> {
         &mut self,
         decode_item: impl FnMut(&mut Self) -> Result<T>,
     ) -> Result<[T; N]> {
-        todo!("Decoder::decode_fixed_array")
+        let vec = self.decode_fixed_array_vec(N, decode_item)?;
+        Ok(vec
+            .try_into()
+            .unwrap_or_else(|_| unreachable!("decoded exact fixed array length")))
     }
 
     /// Decodes a fixed-length array of `count` elements into a [`Vec<T>`]
@@ -907,9 +1266,15 @@ impl<'a> Decoder<'a> {
     pub fn decode_fixed_array_vec<T>(
         &mut self,
         count: usize,
-        decode_item: impl FnMut(&mut Self) -> Result<T>,
+        mut decode_item: impl FnMut(&mut Self) -> Result<T>,
     ) -> Result<Vec<T>> {
-        todo!("Decoder::decode_fixed_array_vec")
+        self.nest(|dec| {
+            let mut out = Vec::with_capacity(initial_array_capacity::<T>(count, dec.remaining()));
+            for _ in 0..count {
+                out.push(decode_item(dec)?);
+            }
+            Ok(out)
+        })
     }
 
     /// Decodes a variable-length array (`T<max_count>`, RFC 4506 §4.13) inside
@@ -927,9 +1292,32 @@ impl<'a> Decoder<'a> {
     pub fn decode_array<T>(
         &mut self,
         max_count: Option<u32>,
-        decode_item: impl FnMut(&mut Self) -> Result<T>,
+        mut decode_item: impl FnMut(&mut Self) -> Result<T>,
     ) -> Result<Vec<T>> {
-        todo!("Decoder::decode_array")
+        self.nest(|dec| {
+            let item_offset = dec.pos;
+            let count_u32 = dec.decode_uint()?;
+            let effective_limit = match max_count {
+                Some(m) => m.min(dec.limits.max_array_len),
+                None => dec.limits.max_array_len,
+            };
+            if count_u32 > effective_limit {
+                return Err(Error::LengthLimit {
+                    offset: item_offset,
+                    len: count_u32 as usize,
+                    limit: effective_limit as usize,
+                });
+            }
+            let count = usize::try_from(count_u32).map_err(|_| Error::LengthOverflow {
+                offset: item_offset,
+                len: usize::MAX,
+            })?;
+            let mut out = Vec::with_capacity(initial_array_capacity::<T>(count, dec.remaining()));
+            for _ in 0..count {
+                out.push(decode_item(dec)?);
+            }
+            Ok(out)
+        })
     }
 
     /// Decodes RFC 4506 §4.19 optional-data (`0` -> `None`, `1` -> `Some(val)`)
@@ -944,7 +1332,13 @@ impl<'a> Decoder<'a> {
         &mut self,
         decode_val: impl FnOnce(&mut Self) -> Result<T>,
     ) -> Result<Option<T>> {
-        todo!("Decoder::decode_option")
+        self.nest(|dec| {
+            if dec.decode_bool()? {
+                Ok(Some(decode_val(dec)?))
+            } else {
+                Ok(None)
+            }
+        })
     }
 
     /// Iteratively decodes an RFC 4506 §4.19 optional-data linked list
@@ -961,9 +1355,30 @@ impl<'a> Decoder<'a> {
     pub fn decode_list<T>(
         &mut self,
         max_count: Option<u32>,
-        decode_item: impl FnMut(&mut Self) -> Result<T>,
+        mut decode_item: impl FnMut(&mut Self) -> Result<T>,
     ) -> Result<Vec<T>> {
-        todo!("Decoder::decode_list")
+        self.nest(|dec| {
+            let effective_limit = match max_count {
+                Some(m) => m.min(dec.limits.max_array_len),
+                None => dec.limits.max_array_len,
+            } as usize;
+            let mut out = Vec::new();
+            loop {
+                let flag_offset = dec.pos;
+                if !dec.decode_bool()? {
+                    break;
+                }
+                if out.len() >= effective_limit {
+                    return Err(Error::LengthLimit {
+                        offset: flag_offset,
+                        len: out.len().saturating_add(1),
+                        limit: effective_limit,
+                    });
+                }
+                out.push(decode_item(dec)?);
+            }
+            Ok(out)
+        })
     }
 
     /// Decodes a signed 32-bit union discriminant inside a depth-guarded scope
@@ -981,7 +1396,10 @@ impl<'a> Decoder<'a> {
         &mut self,
         decode_arm: impl FnOnce(i32, &mut Self) -> Result<T>,
     ) -> Result<T> {
-        todo!("Decoder::decode_union_i32")
+        self.nest(|dec| {
+            let tag = dec.decode_int()?;
+            decode_arm(tag, dec)
+        })
     }
 
     /// Decodes an unsigned 32-bit union discriminant inside a depth-guarded
@@ -999,7 +1417,10 @@ impl<'a> Decoder<'a> {
         &mut self,
         decode_arm: impl FnOnce(u32, &mut Self) -> Result<T>,
     ) -> Result<T> {
-        todo!("Decoder::decode_union_u32")
+        self.nest(|dec| {
+            let tag = dec.decode_uint()?;
+            decode_arm(tag, dec)
+        })
     }
 
     /// Decodes a value of type `T` using its [`XdrDecode`] implementation.
@@ -1008,7 +1429,7 @@ impl<'a> Decoder<'a> {
     ///
     /// Propagates any error returned by [`XdrDecode::decode`].
     pub fn decode<T: XdrDecode>(&mut self) -> Result<T> {
-        todo!("Decoder::decode")
+        T::decode(self)
     }
 }
 
@@ -1053,199 +1474,199 @@ pub struct FixedOpaque<const N: usize>(pub [u8; N]);
 
 impl XdrEncode for i32 {
     fn encode(&self, enc: &mut Encoder<'_>) -> Result<()> {
-        todo!("XdrEncode for i32")
+        enc.encode_int(*self)
     }
 }
 
 impl XdrDecode for i32 {
     fn decode(dec: &mut Decoder<'_>) -> Result<Self> {
-        todo!("XdrDecode for i32")
+        dec.decode_int()
     }
 }
 
 impl XdrEncode for u32 {
     fn encode(&self, enc: &mut Encoder<'_>) -> Result<()> {
-        todo!("XdrEncode for u32")
+        enc.encode_uint(*self)
     }
 }
 
 impl XdrDecode for u32 {
     fn decode(dec: &mut Decoder<'_>) -> Result<Self> {
-        todo!("XdrDecode for u32")
+        dec.decode_uint()
     }
 }
 
 impl XdrEncode for i64 {
     fn encode(&self, enc: &mut Encoder<'_>) -> Result<()> {
-        todo!("XdrEncode for i64")
+        enc.encode_hyper(*self)
     }
 }
 
 impl XdrDecode for i64 {
     fn decode(dec: &mut Decoder<'_>) -> Result<Self> {
-        todo!("XdrDecode for i64")
+        dec.decode_hyper()
     }
 }
 
 impl XdrEncode for u64 {
     fn encode(&self, enc: &mut Encoder<'_>) -> Result<()> {
-        todo!("XdrEncode for u64")
+        enc.encode_uhyper(*self)
     }
 }
 
 impl XdrDecode for u64 {
     fn decode(dec: &mut Decoder<'_>) -> Result<Self> {
-        todo!("XdrDecode for u64")
+        dec.decode_uhyper()
     }
 }
 
 impl XdrEncode for bool {
     fn encode(&self, enc: &mut Encoder<'_>) -> Result<()> {
-        todo!("XdrEncode for bool")
+        enc.encode_bool(*self)
     }
 }
 
 impl XdrDecode for bool {
     fn decode(dec: &mut Decoder<'_>) -> Result<Self> {
-        todo!("XdrDecode for bool")
+        dec.decode_bool()
     }
 }
 
 impl XdrEncode for f32 {
     fn encode(&self, enc: &mut Encoder<'_>) -> Result<()> {
-        todo!("XdrEncode for f32")
+        enc.encode_float(*self)
     }
 }
 
 impl XdrDecode for f32 {
     fn decode(dec: &mut Decoder<'_>) -> Result<Self> {
-        todo!("XdrDecode for f32")
+        dec.decode_float()
     }
 }
 
 impl XdrEncode for f64 {
     fn encode(&self, enc: &mut Encoder<'_>) -> Result<()> {
-        todo!("XdrEncode for f64")
+        enc.encode_double(*self)
     }
 }
 
 impl XdrDecode for f64 {
     fn decode(dec: &mut Decoder<'_>) -> Result<Self> {
-        todo!("XdrDecode for f64")
+        dec.decode_double()
     }
 }
 
 impl XdrEncode for () {
     fn encode(&self, enc: &mut Encoder<'_>) -> Result<()> {
-        todo!("XdrEncode for ()")
+        enc.encode_void()
     }
 }
 
 impl XdrDecode for () {
     fn decode(dec: &mut Decoder<'_>) -> Result<Self> {
-        todo!("XdrDecode for ()")
+        dec.decode_void()
     }
 }
 
 impl XdrEncode for str {
     fn encode(&self, enc: &mut Encoder<'_>) -> Result<()> {
-        todo!("XdrEncode for str")
+        enc.encode_str(self)
     }
 }
 
 impl XdrEncode for String {
     fn encode(&self, enc: &mut Encoder<'_>) -> Result<()> {
-        todo!("XdrEncode for String")
+        enc.encode_str(self)
     }
 }
 
 impl XdrDecode for String {
     fn decode(dec: &mut Decoder<'_>) -> Result<Self> {
-        todo!("XdrDecode for String")
+        dec.decode_string(None)
     }
 }
 
 impl XdrEncode for Opaque {
     fn encode(&self, enc: &mut Encoder<'_>) -> Result<()> {
-        todo!("XdrEncode for Opaque")
+        enc.encode_opaque(&self.0)
     }
 }
 
 impl XdrDecode for Opaque {
     fn decode(dec: &mut Decoder<'_>) -> Result<Self> {
-        todo!("XdrDecode for Opaque")
+        dec.decode_opaque(None).map(Self)
     }
 }
 
 impl<const N: usize> XdrEncode for FixedOpaque<N> {
     fn encode(&self, enc: &mut Encoder<'_>) -> Result<()> {
-        todo!("XdrEncode for FixedOpaque")
+        enc.encode_fixed_opaque(&self.0)
     }
 }
 
 impl<const N: usize> XdrDecode for FixedOpaque<N> {
     fn decode(dec: &mut Decoder<'_>) -> Result<Self> {
-        todo!("XdrDecode for FixedOpaque")
+        dec.decode_fixed_opaque::<N>().map(Self)
     }
 }
 
 impl<T: XdrEncode> XdrEncode for Option<T> {
     fn encode(&self, enc: &mut Encoder<'_>) -> Result<()> {
-        todo!("XdrEncode for Option")
+        enc.encode_option(self.as_ref(), |e, v| v.encode(e))
     }
 }
 
 impl<T: XdrDecode> XdrDecode for Option<T> {
     fn decode(dec: &mut Decoder<'_>) -> Result<Self> {
-        todo!("XdrDecode for Option")
+        dec.decode_option(T::decode)
     }
 }
 
 impl<T: XdrEncode> XdrEncode for [T] {
     fn encode(&self, enc: &mut Encoder<'_>) -> Result<()> {
-        todo!("XdrEncode for [T]")
+        enc.encode_array(self, None, |e, v| v.encode(e))
     }
 }
 
 impl<T: XdrEncode> XdrEncode for Vec<T> {
     fn encode(&self, enc: &mut Encoder<'_>) -> Result<()> {
-        todo!("XdrEncode for Vec<T>")
+        enc.encode_array(self, None, |e, v| v.encode(e))
     }
 }
 
 impl<T: XdrDecode> XdrDecode for Vec<T> {
     fn decode(dec: &mut Decoder<'_>) -> Result<Self> {
-        todo!("XdrDecode for Vec<T>")
+        dec.decode_array(None, T::decode)
     }
 }
 
 impl<T: XdrEncode, const N: usize> XdrEncode for [T; N] {
     fn encode(&self, enc: &mut Encoder<'_>) -> Result<()> {
-        todo!("XdrEncode for [T; N]")
+        enc.encode_fixed_array(self, |e, v| v.encode(e))
     }
 }
 
 impl<T: XdrDecode, const N: usize> XdrDecode for [T; N] {
     fn decode(dec: &mut Decoder<'_>) -> Result<Self> {
-        todo!("XdrDecode for [T; N]")
+        dec.decode_fixed_array(T::decode)
     }
 }
 
 impl<T: XdrEncode + ?Sized> XdrEncode for Box<T> {
     fn encode(&self, enc: &mut Encoder<'_>) -> Result<()> {
-        todo!("XdrEncode for Box<T>")
+        enc.nest(|e| (**self).encode(e))
     }
 }
 
 impl<T: XdrDecode> XdrDecode for Box<T> {
     fn decode(dec: &mut Decoder<'_>) -> Result<Self> {
-        todo!("XdrDecode for Box<T>")
+        dec.nest(|d| T::decode(d).map(Self::new))
     }
 }
 
 impl<T: XdrEncode + ?Sized> XdrEncode for &T {
     fn encode(&self, enc: &mut Encoder<'_>) -> Result<()> {
-        todo!("XdrEncode for &T")
+        (*self).encode(enc)
     }
 }
 
@@ -1257,13 +1678,13 @@ impl<T: XdrEncode + ?Sized> XdrEncode for &T {
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// let encoded = akku::xdr::encode(&42u32)?;
 /// assert_eq!(encoded, [0x00, 0x00, 0x00, 0x2a]);
 /// # Ok::<(), akku::xdr::Error>(())
 /// ```
 pub fn encode<T: XdrEncode + ?Sized>(value: &T) -> Result<Vec<u8>> {
-    todo!("xdr::encode")
+    encode_with(value, Limits::new())
 }
 
 /// Encodes `value` by appending to `buf` using default [`Limits`].
@@ -1277,14 +1698,14 @@ pub fn encode<T: XdrEncode + ?Sized>(value: &T) -> Result<Vec<u8>> {
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// let mut buf = vec![0xde, 0xad, 0xbe, 0xef];
 /// akku::xdr::encode_into(&1u32, &mut buf)?;
 /// assert_eq!(buf, [0xde, 0xad, 0xbe, 0xef, 0x00, 0x00, 0x00, 0x01]);
 /// # Ok::<(), akku::xdr::Error>(())
 /// ```
 pub fn encode_into<T: XdrEncode + ?Sized>(value: &T, buf: &mut Vec<u8>) -> Result<()> {
-    todo!("xdr::encode_into")
+    Encoder::new(buf).encode(value)
 }
 
 /// Encodes `value` into a newly allocated [`Vec<u8>`] with custom [`Limits`].
@@ -1295,7 +1716,7 @@ pub fn encode_into<T: XdrEncode + ?Sized>(value: &T, buf: &mut Vec<u8>) -> Resul
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// use akku::xdr::{self, Limits};
 ///
 /// let limits = Limits::new().with_max_total_bytes(8);
@@ -1304,7 +1725,9 @@ pub fn encode_into<T: XdrEncode + ?Sized>(value: &T, buf: &mut Vec<u8>) -> Resul
 /// # Ok::<(), akku::xdr::Error>(())
 /// ```
 pub fn encode_with<T: XdrEncode + ?Sized>(value: &T, limits: Limits) -> Result<Vec<u8>> {
-    todo!("xdr::encode_with")
+    let mut buf = Vec::new();
+    Encoder::with_limits(&mut buf, limits).encode(value)?;
+    Ok(buf)
 }
 
 /// Decodes an owned value of type `T` from `input` using default [`Limits`].
@@ -1319,13 +1742,13 @@ pub fn encode_with<T: XdrEncode + ?Sized>(value: &T, limits: Limits) -> Result<V
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// let value: i32 = akku::xdr::decode(&[0xff, 0xff, 0xff, 0xff])?;
 /// assert_eq!(value, -1);
 /// # Ok::<(), akku::xdr::Error>(())
 /// ```
 pub fn decode<T: XdrDecode>(input: &[u8]) -> Result<T> {
-    todo!("xdr::decode")
+    decode_with(input, Limits::new())
 }
 
 /// Decodes an owned value of type `T` from `input` with custom [`Limits`].
@@ -1340,7 +1763,7 @@ pub fn decode<T: XdrDecode>(input: &[u8]) -> Result<T> {
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// use akku::xdr::{self, Limits};
 ///
 /// let limits = Limits::new().with_max_opaque_len(16);
@@ -1349,5 +1772,8 @@ pub fn decode<T: XdrDecode>(input: &[u8]) -> Result<T> {
 /// # Ok::<(), akku::xdr::Error>(())
 /// ```
 pub fn decode_with<T: XdrDecode>(input: &[u8], limits: Limits) -> Result<T> {
-    todo!("xdr::decode_with")
+    let mut dec = Decoder::with_limits(input, limits);
+    let value = dec.decode()?;
+    dec.finish()?;
+    Ok(value)
 }
