@@ -24,6 +24,14 @@
 //!
 //! - **Native Tier-1 targets (Linux, Android, macOS, iOS, Windows):** full
 //!   native readiness reactor support (`epoll`, `kqueue`, `WSAPoll`).
+//! - **Windows version:** Windows 10 version 2004 (build 19041) or Windows
+//!   Server 2022 and later. Older versions (including Windows Server 2019)
+//!   have a `WSAPoll` that never reports a failed non-blocking connect, so
+//!   [`AsyncTcpStream::connect`] to a refused port would wait forever there.
+//!   Like `std::net` sockets, the sockets [`AsyncTcpStream::connect`] creates
+//!   are not inherited by child processes (`SOCK_CLOEXEC` on Linux and
+//!   Android, `FD_CLOEXEC` on Darwin, `WSA_FLAG_NO_HANDLE_INHERIT` on
+//!   Windows).
 //! - **`wasm32`:** `std::net` address and blocking re-exports compile cleanly;
 //!   native async socket types (`AsyncTcp*`) are `#[cfg(not(target_arch = "wasm32"))]`
 //!   because raw OS TCP sockets are unavailable in `wasm32`.
@@ -38,6 +46,17 @@
 //!   (ignoring errors) so the remote peer observes EOF promptly.
 //! - Each reactor enforces an internal cap of `65_536` concurrent registered
 //!   sockets and caps single-syscall read/write slices at `1 << 30` bytes.
+//!
+//! # Fairness
+//!
+//! Every ready socket operation (including one that fails at once, such as
+//! `accept` under `EMFILE`) spends the cooperative budget of the current
+//! [`crate::task`] poll. After `128` of them the next operation returns
+//! `Poll::Pending` and the task is re-polled after the other ready tasks and
+//! the next reactor turn, so a fast peer or a persistent error cannot starve
+//! other connections. A server `accept` loop that hits `EMFILE` still spins
+//! (fairly) until a descriptor frees up; back off with
+//! [`crate::task::yield_now`] or drop idle connections in that case.
 //!
 //! # Examples
 //!
@@ -99,11 +118,24 @@ use std::task::{ready, Context, Poll};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::io::{AsyncRead, AsyncWrite};
 #[cfg(not(target_arch = "wasm32"))]
-use reactor::{Direction, Reactor, Registration};
+use reactor::{Direction, Reactor, Registration, Waiters};
 
 /// Single-syscall read/write slice cap (`1 << 30`, as in Go's `internal/poll`).
 #[cfg(not(target_arch = "wasm32"))]
 const MAX_IO_LEN: usize = 1 << 30;
+
+/// Spends one unit of the cooperative budget, first yielding if it is spent,
+/// so a loop of constructor calls that fail at once (`EMFILE`,
+/// `EADDRINUSE`, unresolvable input) cannot starve sibling tasks.
+#[cfg(not(target_arch = "wasm32"))]
+async fn coop_step() {
+    poll_fn(|cx| {
+        ready!(crate::task::poll_budget(cx));
+        crate::task::consume_budget();
+        Poll::Ready(())
+    })
+    .await
+}
 
 /// Borrows the OS handle of a std socket in the form `sys` expects.
 #[cfg(all(unix, not(target_arch = "wasm32")))]
@@ -122,6 +154,11 @@ fn handle<T: AsSocket>(socket: &T) -> sys::Handle<'_> {
 ///
 /// Dropping an `AsyncTcpListener` deregisters it from the OS reactor before
 /// closing the underlying socket.
+///
+/// The listener is `Send + Sync`, and [`accept`](Self::accept) takes `&self`,
+/// so several tasks may accept concurrently from one `Arc<AsyncTcpListener>`:
+/// every waiting task is woken when a connection arrives, and each
+/// connection is handed to exactly one of them.
 #[cfg(not(target_arch = "wasm32"))]
 pub struct AsyncTcpListener {
     /// `None` only after [`AsyncTcpListener::into_std`] moved it out.
@@ -136,7 +173,14 @@ impl AsyncTcpListener {
     /// Returns `Err(io::Error)` if called outside an active
     /// [`crate::task::Runtime`], if the runtime is shutting down, or if binding
     /// fails.
+    ///
+    /// # Blocking
+    ///
+    /// A host name in `addr` is resolved with the blocking system resolver
+    /// (`getaddrinfo`) on the runtime thread, which stalls every task until it
+    /// returns. Pass a [`SocketAddr`] (or an IP literal) to avoid that.
     pub async fn bind<A: ToSocketAddrs>(addr: A) -> io::Result<Self> {
+        coop_step().await;
         let reactor = crate::task::current_reactor()?;
         let listener = std::net::TcpListener::bind(addr)?;
         Self::register(listener, reactor)
@@ -144,7 +188,7 @@ impl AsyncTcpListener {
 
     fn register(listener: std::net::TcpListener, reactor: Arc<Reactor>) -> io::Result<Self> {
         listener.set_nonblocking(true)?;
-        let reg = Registration::new(reactor, true)?;
+        let reg = Registration::new(reactor, true, Waiters::Shared)?;
         Ok(Self {
             inner: Some(listener),
             reg,
@@ -161,12 +205,20 @@ impl AsyncTcpListener {
     /// [`AsyncTcpStream`] and the remote peer address.
     ///
     /// This future is cancel-safe: dropping it before completion does not drop
-    /// or lose an already-queued incoming connection.
+    /// or lose an already-queued incoming connection. Any number of tasks may
+    /// await `accept` on the same listener at once.
     pub async fn accept(&self) -> io::Result<(AsyncTcpStream, SocketAddr)> {
         poll_fn(|cx| self.poll_accept(cx)).await
     }
 
     /// Polls for an incoming TCP connection.
+    ///
+    /// On `Poll::Pending`, the waker of `cx` is kept in addition to wakers of
+    /// other pending callers (deduplicated with [`std::task::Waker::will_wake`])
+    /// and all of them are woken when the listener becomes ready. The set is
+    /// bounded by the runtime's [`crate::task::Limits::max_tasks`] plus one;
+    /// past that bound, the parked wakers are woken early (spuriously) rather
+    /// than dropped.
     pub fn poll_accept(
         &self,
         cx: &mut Context<'_>,
@@ -298,7 +350,16 @@ impl AsyncTcpStream {
     /// last error if all fail. Returns `Err(io::Error)` if called outside an
     /// active [`crate::task::Runtime`]. Cancel-safe: dropping the future closes
     /// any in-progress socket cleanly.
+    ///
+    /// # Blocking
+    ///
+    /// A host name in `addr` is resolved with the blocking system resolver
+    /// (`getaddrinfo`) on the runtime thread, which stalls every task for up
+    /// to the resolver's timeout. Pass a [`SocketAddr`] (or an IP literal) to
+    /// avoid that. The connect itself has no timeout of its own beyond the
+    /// operating system's TCP handshake timeout.
     pub async fn connect<A: ToSocketAddrs>(addr: A) -> io::Result<Self> {
+        coop_step().await;
         let reactor = crate::task::current_reactor()?;
         let addrs: Vec<SocketAddr> = addr.to_socket_addrs()?.collect();
         let mut last_err = None;
@@ -351,7 +412,7 @@ impl AsyncTcpStream {
         initial_ready: bool,
     ) -> io::Result<Self> {
         stream.set_nonblocking(true)?;
-        let reg = Registration::new(reactor, initial_ready)?;
+        let reg = Registration::new(reactor, initial_ready, Waiters::Single)?;
         Ok(Self {
             inner: Some(stream),
             reg,

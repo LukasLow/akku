@@ -1150,3 +1150,348 @@ fn registration_limit_or_fd_exhaustion_is_an_error_and_recovers() {
         again.expect("registration works again after dropping streams");
     });
 }
+
+// --- G5 regressions: cooperative budget, shared-listener wakers ---------------
+
+/// Ready I/O operations one task may run before a sibling must have been
+/// polled. Far above the runtime's internal per-poll budget, so this does not
+/// pin its exact value, and far below [`HOG_OPS`].
+const SIBLING_BOUND: usize = 4_096;
+
+/// Upper bound on the ready operations a hog loop runs before giving up.
+const HOG_OPS: usize = 100_000;
+
+/// Spawns a task that counts its `yield_now` turns until `stop` is set.
+fn spawn_turn_counter(
+    turns: &Arc<AtomicUsize>,
+    stop: &Arc<std::sync::atomic::AtomicBool>,
+) -> task::JoinHandle<()> {
+    let turns = Arc::clone(turns);
+    let stop = Arc::clone(stop);
+    task::spawn(async move {
+        while !stop.load(Ordering::SeqCst) {
+            task::yield_now().await;
+            turns.fetch_add(1, Ordering::SeqCst);
+        }
+    })
+}
+
+/// Turns a connected std stream into a "listener" whose `accept` always fails
+/// at once (`EINVAL` / `WSAEINVAL`: the socket is not listening). Like an
+/// `EMFILE` accept loop, every attempt is an immediately ready error.
+fn always_failing_listener() -> io::Result<(TcpListener, TcpStream, TcpStream)> {
+    let real = TcpListener::bind(LOCALHOST)?;
+    let peer = TcpStream::connect(real.local_addr()?)?;
+    let (accepted, _) = real.accept()?;
+    let client = TcpStream::connect(real.local_addr()?)?;
+    #[cfg(unix)]
+    let fake = TcpListener::from(std::os::fd::OwnedFd::from(client));
+    #[cfg(windows)]
+    let fake = TcpListener::from(std::os::windows::io::OwnedSocket::from(client));
+    Ok((fake, peer, accepted))
+}
+
+#[test]
+fn accept_error_loop_does_not_starve_siblings() {
+    watchdog(|| {
+        let (fake, _peer, _accepted) = always_failing_listener().unwrap();
+        let (errors_before_sibling, first_error) = run(async move {
+            let listener = AsyncTcpListener::from_std(fake).unwrap();
+            let turns = Arc::new(AtomicUsize::new(0));
+            let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let sibling = spawn_turn_counter(&turns, &stop);
+            let turns_hog = Arc::clone(&turns);
+            let hog = task::spawn(async move {
+                let start = turns_hog.load(Ordering::SeqCst);
+                let mut first_error = None;
+                for attempt in 0..HOG_OPS {
+                    if turns_hog.load(Ordering::SeqCst) > start {
+                        return (attempt, first_error);
+                    }
+                    match listener.accept().await {
+                        Ok(_) => panic!("a non-listening socket must not accept"),
+                        Err(e) => {
+                            first_error.get_or_insert(e.kind());
+                        }
+                    }
+                }
+                (HOG_OPS, first_error)
+            });
+            let out = hog.await.unwrap();
+            stop.store(true, Ordering::SeqCst);
+            sibling.await.unwrap();
+            out
+        });
+        assert!(first_error.is_some(), "accept must fail on a non-listener");
+        assert!(
+            errors_before_sibling <= SIBLING_BOUND,
+            "sibling starved for {errors_before_sibling} accept errors (bound {SIBLING_BOUND})"
+        );
+    });
+}
+
+#[test]
+fn ready_one_byte_read_loop_yields_to_siblings() {
+    const PAYLOAD: usize = 64 * 1024;
+    watchdog(|| {
+        let reads_before_sibling = run(async {
+            let listener = AsyncTcpListener::bind(LOCALHOST).await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            // A blocking std writer queues the whole payload before the reader
+            // starts, so every 1-byte read is immediately ready.
+            let writer = thread::spawn(move || {
+                let mut client = TcpStream::connect(addr).unwrap();
+                client.write_all(&vec![7u8; PAYLOAD]).unwrap();
+                client
+            });
+            let (mut server, _) = listener.accept().await.unwrap();
+            let client = writer.join().unwrap();
+
+            let turns = Arc::new(AtomicUsize::new(0));
+            let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let sibling = spawn_turn_counter(&turns, &stop);
+            let turns_hog = Arc::clone(&turns);
+            let hog = task::spawn(async move {
+                let start = turns_hog.load(Ordering::SeqCst);
+                let mut byte = [0u8; 1];
+                for read in 0..PAYLOAD {
+                    if turns_hog.load(Ordering::SeqCst) > start {
+                        return read;
+                    }
+                    assert_eq!(server.read(&mut byte).await.unwrap(), 1);
+                }
+                PAYLOAD
+            });
+            let out = hog.await.unwrap();
+            stop.store(true, Ordering::SeqCst);
+            sibling.await.unwrap();
+            drop(client);
+            out
+        });
+        assert!(
+            reads_before_sibling <= SIBLING_BOUND,
+            "sibling starved for {reads_before_sibling} ready reads (bound {SIBLING_BOUND})"
+        );
+    });
+}
+
+#[test]
+fn eof_read_loop_in_root_future_yields_to_spawned_tasks() {
+    watchdog(|| {
+        let eofs_before_sibling = run(async {
+            let listener = AsyncTcpListener::bind(LOCALHOST).await.unwrap();
+            let (mut client, server) = connected_pair(&listener).await.unwrap();
+            drop(server);
+            let turns = Arc::new(AtomicUsize::new(0));
+            let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let sibling = spawn_turn_counter(&turns, &stop);
+            let start = turns.load(Ordering::SeqCst);
+            let mut buf = [0u8; 16];
+            let mut eofs = HOG_OPS;
+            for read in 0..HOG_OPS {
+                if turns.load(Ordering::SeqCst) > start {
+                    eofs = read;
+                    break;
+                }
+                // EOF is permanently ready: every read returns `Ok(0)` at once.
+                assert_eq!(client.read(&mut buf).await.unwrap(), 0);
+            }
+            stop.store(true, Ordering::SeqCst);
+            sibling.await.unwrap();
+            eofs
+        });
+        assert!(
+            eofs_before_sibling <= SIBLING_BOUND,
+            "spawned task starved for {eofs_before_sibling} EOF reads (bound {SIBLING_BOUND})"
+        );
+    });
+}
+
+#[test]
+fn copy_to_between_ready_sockets_yields_to_siblings() {
+    const PAYLOAD: usize = 64 * 1024;
+    watchdog(|| {
+        let (copied, sibling_turns_during_copy) = run(async {
+            let listener = AsyncTcpListener::bind(LOCALHOST).await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let writer = thread::spawn(move || {
+                let mut client = TcpStream::connect(addr).unwrap();
+                client.write_all(&vec![3u8; PAYLOAD]).unwrap();
+                client.shutdown(Shutdown::Write).unwrap();
+                client
+            });
+            let (server, _) = listener.accept().await.unwrap();
+            let client = writer.join().unwrap();
+
+            let turns = Arc::new(AtomicUsize::new(0));
+            let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let sibling = spawn_turn_counter(&turns, &stop);
+            let turns_hog = Arc::clone(&turns);
+            let hog = task::spawn(async move {
+                let start = turns_hog.load(Ordering::SeqCst);
+                // A 1-byte-at-a-time reader over the buffered payload and an
+                // always-writable sink: every operation is ready.
+                let mut src = OneByteReader(server);
+                let mut sink = CountingSink::default();
+                let copied = src.copy_to(&mut sink).await.unwrap();
+                (copied, turns_hog.load(Ordering::SeqCst) - start)
+            });
+            let out = hog.await.unwrap();
+            stop.store(true, Ordering::SeqCst);
+            sibling.await.unwrap();
+            drop(client);
+            out
+        });
+        assert_eq!(copied, PAYLOAD as u64);
+        assert!(
+            sibling_turns_during_copy > 0,
+            "sibling never ran during a {PAYLOAD}-step ready copy"
+        );
+    });
+}
+
+/// Forwards reads one byte at a time, so a copy needs one ready read per byte.
+struct OneByteReader(AsyncTcpStream);
+
+impl AsyncRead for OneByteReader {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        let len = buf.len().min(1);
+        self.0.poll_read(cx, &mut buf[..len])
+    }
+}
+
+/// An always-ready writer that discards bytes.
+#[derive(Default)]
+struct CountingSink(u64);
+
+impl AsyncWrite for CountingSink {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        self.0 += buf.len() as u64;
+        Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+#[test]
+fn concurrent_acceptors_on_shared_listener_all_complete() {
+    const ACCEPTORS: usize = 4;
+    watchdog(|| {
+        let accepted = run(async {
+            let listener = Arc::new(AsyncTcpListener::bind(LOCALHOST).await.unwrap());
+            let addr = listener.local_addr().unwrap();
+            let acceptors: Vec<_> = (0..ACCEPTORS)
+                .map(|_| {
+                    let listener = Arc::clone(&listener);
+                    task::spawn(async move { listener.accept().await.map(|(_, peer)| peer) })
+                })
+                .collect();
+            // Let every acceptor park on the empty backlog with its own waker.
+            for _ in 0..8 {
+                task::yield_now().await;
+            }
+            let clients: Vec<TcpStream> = (0..ACCEPTORS)
+                .map(|_| TcpStream::connect(addr).unwrap())
+                .collect();
+            let mut peers = Vec::new();
+            for acceptor in acceptors {
+                peers.push(acceptor.await.unwrap().unwrap());
+            }
+            let mut expected: Vec<SocketAddr> =
+                clients.iter().map(|c| c.local_addr().unwrap()).collect();
+            peers.sort();
+            expected.sort();
+            assert_eq!(peers, expected, "each client is accepted exactly once");
+            peers.len()
+        });
+        assert_eq!(accepted, ACCEPTORS);
+    });
+}
+
+/// Counts how often it was woken.
+struct CountingWaker(AtomicUsize);
+
+impl Wake for CountingWaker {
+    fn wake(self: Arc<Self>) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn poll_accept_with_many_distinct_wakers_wakes_every_one() {
+    // More distinct wakers than the runtime has task slots: the listener's
+    // waiter set is bounded, yet no waiter may be lost (overflow wakes early).
+    const WAKERS: usize = 100;
+    watchdog(|| {
+        let rt = Runtime::with_limits(task::Limits::new().with_max_tasks(4)).unwrap();
+        let woken = rt.block_on(async {
+            let listener = AsyncTcpListener::bind(LOCALHOST).await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let counters: Vec<Arc<CountingWaker>> = (0..WAKERS)
+                .map(|_| Arc::new(CountingWaker(AtomicUsize::new(0))))
+                .collect();
+            for counter in &counters {
+                let waker = Waker::from(Arc::clone(counter));
+                let mut cx = Context::from_waker(&waker);
+                assert!(listener.poll_accept(&mut cx).is_pending());
+            }
+            let _client = TcpStream::connect(addr).unwrap();
+            for _ in 0..100_000 {
+                if counters.iter().all(|c| c.0.load(Ordering::SeqCst) > 0) {
+                    break;
+                }
+                task::yield_now().await;
+            }
+            counters
+                .iter()
+                .filter(|c| c.0.load(Ordering::SeqCst) > 0)
+                .count()
+        });
+        assert_eq!(woken, WAKERS, "every waiting waker must be woken");
+    });
+}
+
+#[test]
+fn immediate_connect_error_loop_does_not_starve_siblings() {
+    watchdog(|| {
+        let errors_before_sibling = run(async {
+            let turns = Arc::new(AtomicUsize::new(0));
+            let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let sibling = spawn_turn_counter(&turns, &stop);
+            let start = turns.load(Ordering::SeqCst);
+            let mut errors = HOG_OPS;
+            for attempt in 0..HOG_OPS {
+                if turns.load(Ordering::SeqCst) > start {
+                    errors = attempt;
+                    break;
+                }
+                // No address to try: fails at once, without touching the reactor.
+                let err = AsyncTcpStream::connect(&[][..] as &[SocketAddr])
+                    .await
+                    .unwrap_err();
+                assert_eq!(err.kind(), ErrorKind::InvalidInput);
+            }
+            stop.store(true, Ordering::SeqCst);
+            sibling.await.unwrap();
+            errors
+        });
+        assert!(
+            errors_before_sibling <= SIBLING_BOUND,
+            "sibling starved for {errors_before_sibling} failing connects (bound {SIBLING_BOUND})"
+        );
+    });
+}

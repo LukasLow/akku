@@ -64,7 +64,7 @@ Blocking `TcpListener`, `TcpStream`, and `UdpSocket` are re-exported directly fr
 |---|---|---|---:|---:|
 | `crates/akku/src/net/sys/epoll.rs` | Linux, Android | `epoll` (`EPOLLET`) + `eventfd` | 6 | ~11–12 |
 | `crates/akku/src/net/sys/kqueue.rs` | macOS, iOS | `kqueue` (`EV_CLEAR`) + `EVFILT_USER` | 6 | ~12–14 |
-| `crates/akku/src/net/sys/wsapoll.rs` | Windows | `WSAPoll` (armed level-triggered) + loopback TCP pair | 5 | ~8–10 |
+| `crates/akku/src/net/sys/wsapoll.rs` | Windows | `WSAPoll` (armed level-triggered) + loopback TCP pair | 5 (`WSAPoll`, `WSAGetLastError`, `WSASocketW`, `connect`, `SetHandleInformation`; G5) | ~8–10 (9 after G5) |
 | **Total (Phase 1)** | **All 5 Tier-1 OSes** | **0 `unsafe impl Send/Sync`, 0 `Vec::set_len`, 0 `MaybeUninit`** | **17** | **~31–36** |
 
 ---
@@ -333,7 +333,8 @@ const _: () = {
 | Operation in `net/sys/wsapoll.rs` | `unsafe` blocks | Safety invariant summary |
 |---|---:|---|
 | `WSAPoll` + `WSAGetLastError` | 2 | `fdarray` is a valid `&mut [WsaPollFd]` with `len >= 1` (slot 0 is `wake_reader`) and `len <= u32::MAX`; `WSAGetLastError` has no preconditions |
-| `socket` + `OwnedSocket::from_raw_socket` | 2 | Return checked `!= INVALID_SOCKET` before adopting into `OwnedSocket`; safely converted via `TcpStream::from(owned_socket)` |
+| `WSASocketW(.., WSA_FLAG_OVERLAPPED \| WSA_FLAG_NO_HANDLE_INHERIT)` + `OwnedSocket::from_raw_socket` (G5; was `socket`) | 2 | Return checked `!= INVALID_SOCKET` before adopting into `OwnedSocket`; safely converted via `TcpStream::from(owned_socket)` |
+| `SetHandleInformation(HANDLE_FLAG_INHERIT, 0)` (G5, fallback only) | 1 | Socket is open and borrowed; std's `set_no_inherit` does the same |
 | `ioctlsocket(FIONBIO)` | 1 | `socket` is open; `&mut 1u32` is valid writable `u_long` |
 | `connect` (IPv4 / IPv6) + `WSAGetLastError` | 3–5 | Pointer refers to initialized `SockAddrIn`/`SockAddrIn6` with exact `size_of` as `namelen`; `socket` is open |
 | **Total** | **8–10** | **0 `unsafe impl`, 0 `Vec::set_len`, 0 `MaybeUninit`** |
@@ -407,7 +408,9 @@ pub use std::net::{
 ### DoS limits & defaults
 
 `akku::net` itself does not allocate unbounded per-connection buffers (callers supply `&mut [u8]` / `&[u8]`); reactor-level bounds are owned by `akku::task::Limits` and internal reactor invariants:
-- **`max_io_events_per_tick`**: default `1_024` (from `akku::task::Limits`; bounds the pre-allocated event buffer on `epoll`/`kqueue` to ~12–32 KiB per runtime).
+- **`max_io_events_per_tick`**: default `1_024` (from `akku::task::Limits`; bounds the pre-allocated event buffer on `epoll`/`kqueue` to ~12–32 KiB per runtime). Clamped to `1..=65_536` (`MAX_REGISTRATIONS`) in `Reactor::new`, since one turn can never report more ready sources than are registered, which caps the buffer at about 2 MiB.
+- **Cooperative budget**: `128` ready socket operations per task poll (and per root poll); see §G5 fixes 1.
+- **Shared-listener waiters**: at most `max_tasks + 1` (clamped to `65_537`) distinct wakers per listener direction; see §G5 fixes 2.
 - **`max_registrations`**: internal cap of `65_536` concurrent registered sockets per reactor (prevents unbounded slab growth under fd/socket leaks; returns `io::Error::other("reactor registration limit reached")` if exceeded, though OS `RLIMIT_NOFILE` typically triggers `EMFILE` earlier).
 - **Single syscall read/write slice cap**: `1 << 30` bytes (1 GiB, matching Go `fd_unix.go:142` and preventing signed `isize`/`c_int` truncation edge cases on Unix and Windows).
 - **Zero-length I/O guard**: `poll_read` with `&mut []` and `poll_write` with `&[]` return `Poll::Ready(Ok(0))` immediately without waiting or misreporting EOF.
@@ -589,7 +592,7 @@ This keeps the safe reactor (`Slab<Arc<Source>>` + generational `u64` tokens + p
 - **Generational `Slab` tokens (`u64`) instead of raw-pointer tokens.** Discards stale OS events after close/reuse with zero `unsafe` provenance casts and no deferred-free list (contrasting with `tokio/src/runtime/io/registration_set.rs:25-30`).
 - **Pre-initialized event buffers.** Allocating zeroed `Vec<EpollEvent>` / `Vec<Kevent>` / `Vec<WsaPollFd>` once per `Runtime` eliminates `MaybeUninit` and `unsafe { Vec::set_len }` across all three `sys/` backends.
 - **True non-blocking `connect` on all three backends.** Avoids freezing the single-threaded executor or leaking helper threads on drop-cancellation; `std::net::TcpStream::take_error()` checks `SO_ERROR` safely on all OSes once writability/error arrives.
-- **`&mut self` on `AsyncRead`/`AsyncWrite` + `split()`/`into_split()`.** Compile-time enforcement of single reader + single writer per stream, avoiding lost-wakeup waker clobbering (`tokio/src/runtime/io/registration.rs:28-33`).
+- **`&mut self` on `AsyncRead`/`AsyncWrite` + `split()`/`into_split()`.** Compile-time enforcement of single reader + single writer per **stream**, so each stream direction keeps one waker slot (`tokio/src/runtime/io/registration.rs:28-33`). This does **not** hold for `AsyncTcpListener`: it is `Sync` and `accept`/`poll_accept` take `&self` (matching std and tokio), so any number of tasks may wait on its read direction. The listener therefore keeps a bounded, deduplicated waker set and wakes all of them on readiness (§G5 fixes 2).
 - **`from_std` calls `set_nonblocking(true)` automatically.** Matches `smol-rs/async-net` (`src/tcp.rs:224-226`) rather than rejecting blocking sockets.
 - **Deregister before close in `Drop` and `into_std`.** Prevents fd/socket reuse races before reactor removal.
 - **Optimistic readiness on `accept()`.** Newly accepted sockets pre-seed `READABLE | WRITABLE` (`tokio/src/net/tcp/stream.rs:174-181`) to save an extra reactor wait turn.
@@ -669,3 +672,12 @@ Implementation details that refine §Dependencies and §API rationale 3. They ch
 5. **Wakeup coalescing.** The poller-level `notified` flag is cleared only after the wakeup is drained (`eventfd` read, `EVFILT_USER` retrieval, or the loopback socket drained to `WouldBlock`). On top of that flag, the runtime calls `unpark` only while its driver is parked (`parked` flag, `SeqCst` Dekker check against the run queue and the root `woken` flag).
 6. **`WSAPoll` masks.** `POLLHUP`, `POLLERR`, and `POLLNVAL` are reported whatever the requested events are. Each one therefore wakes and disarms both directions, so a hung-up socket cannot spin the poller. A direction is re-armed only when a task waits on it again. `arm` called from another thread during a blocking `WSAPoll` interrupts the wait (`polling` flag).
 7. **Connect.** An in-progress connect is registered not-ready. It completes when the socket becomes writable and then checks `take_error()` followed by `peer_addr()`; a `NotConnected` result counts as spurious writability, so readiness is cleared and the connect waits again. Accepted sockets and sockets passed to `from_std` start optimistically ready.
+
+## G5 fixes (2026-11-26)
+
+Fixes for the G5 audit (`_dev/AUDIT.md`). No public name was added.
+
+1. **Cooperative budget (CRITICAL).** `Registration::poll_io` and `Registration::poll_ready` first call `crate::task::poll_budget(cx)` and return `Pending` (with a deferred self-wake) once the current poll has spent its `128`-operation budget; every `Ready` they return (data, EOF, `EMFILE`, `EINVAL`, a shutdown error) spends one unit through `crate::task::consume_budget()`. The `WouldBlock` retry inside `poll_io` does not spend budget, and a budget yield never clears readiness, so the next poll still sees it. `AsyncTcpListener::bind` and `AsyncTcpStream::connect` spend one unit up front (`coop_step`), so loops of constructors that fail at once (`EMFILE` from `socket()`, `EADDRINUSE`, an empty address list) also yield. `copy_to` between ready sockets inherits the budget through `poll_read`/`poll_write`. An `accept` loop under `EMFILE` still retries, but fairly: other connections, the root future, and the reactor keep running, so closing handlers can free descriptors.
+2. **Shared-listener waiters (MEDIUM).** Each direction keeps a `WakerSet` (one inline slot plus a spill `Vec` that never allocates for streams). Streams register with `Waiters::Single` (a new waker replaces the old one, as before). Listeners register with `Waiters::Shared`: a waker that `will_wake`-matches a parked one is not added again, so each task contributes at most one waker; all parked wakers are woken on readiness; the woken tasks race for the backlog and the losers park again after `WouldBlock`. The set is bounded by `max_tasks + 1` (clamped to `1..=65_537`, passed to `Reactor::new` by the runtime). When a new distinct waker arrives at a full set, all parked wakers are woken early (a spurious wakeup is always safe) instead of being dropped. Parking is `O(waiters)` because of the dedupe scan.
+3. **Non-inheritable Windows sockets (MEDIUM).** `connect_nonblocking` creates its socket like std's `Socket::new`: `WSASocketW(af, SOCK_STREAM, IPPROTO_TCP, null, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT)`, and if that fails with `WSAEINVAL` or `WSAEPROTOTYPE` (systems without the flag), `WSASocketW` without it followed by `SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0)`. FFI signatures and constants were checked against std's `library/std/src/sys/pal/windows/c/windows_sys.rs` and `microsoft/windows-rs` (`WSA_FLAG_OVERLAPPED = 0x01`, `WSA_FLAG_NO_HANDLE_INHERIT = 0x80`, `HANDLE_FLAG_INHERIT = 0x01`, `WSAEINVAL = 10022`, `WSAEPROTOTYPE = 10041`, `GROUP`/`DWORD` = `u32`, `BOOL` = `i32`). A `#[cfg(test)]` module in `wsapoll.rs` checks the inherit flag with `GetHandleInformation` (test-only FFI). `wsapoll.rs` now has 9 non-test `unsafe` blocks (1 more in its tests).
+4. **LOWs.** `sin6_flowinfo` keeps std's host-order behaviour, with a comment in all three backends. Rustdoc now covers blocking DNS in `bind`/`connect` (`# Blocking`), the Windows 10 2004 / Server 2022 minimum for refused-connect detection (`# Platform support`), fairness (`# Fairness`), and shared accepting (`AsyncTcpListener`, `poll_accept`). The reactor wakes every batch through `crate::task::wake_all`, so one panicking waker cannot drop the others' wakeups.

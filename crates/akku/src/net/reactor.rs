@@ -4,7 +4,14 @@
 //! The reactor owns one OS poller (`sys::Poller`) and a generational slab of
 //! registered sources. Each source tracks per-direction readiness, a readiness
 //! tick (so a `WouldBlock` never clears readiness that a newer event set), and
-//! one waker per direction (single reader + single writer per socket).
+//! the wakers waiting on each direction: one slot for streams (`&mut self`
+//! I/O and the split halves allow one reader and one writer), or a bounded,
+//! deduplicated set for listeners, which accept through `&self` and may be
+//! shared by several tasks.
+//!
+//! Every readiness wait spends the current poll's cooperative budget
+//! (`crate::task::poll_budget`), so an always-ready socket cannot keep one
+//! task inside a single poll forever.
 //!
 //! Sockets join the OS poller lazily, on their first `Pending` wait: `epoll`
 //! `EPOLL_CTL_ADD` and `kqueue` `EV_ADD` both report readiness that already
@@ -22,6 +29,14 @@ use super::sys::{self, Interest, ReadyEvent};
 
 /// Internal cap on concurrently registered sources per reactor.
 pub(crate) const MAX_REGISTRATIONS: usize = 65_536;
+
+/// Upper clamp of `Limits::max_io_events_per_tick`: no turn can report more
+/// ready sources than there are registrations.
+pub(crate) const MAX_EVENTS_PER_TURN: usize = MAX_REGISTRATIONS;
+
+/// Upper clamp of the per-direction waiter set of a shared source (the
+/// default `max_tasks` plus the root future).
+const MAX_WAITERS: usize = 65_537;
 
 const READ: usize = 0;
 const WRITE: usize = 1;
@@ -57,16 +72,90 @@ pub(crate) fn shutting_down_error() -> io::Error {
     io::Error::other("akku::task runtime is shutting down")
 }
 
+/// Who may wait on one direction of a source at the same time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Waiters {
+    /// One poller per direction (streams): a new waker replaces the old one.
+    Single,
+    /// Any number of tasks through `&self` (listeners): every distinct waker
+    /// is kept and all are woken on readiness.
+    Shared,
+}
+
+/// The wakers parked on one direction. The first lives inline, so a stream
+/// never allocates; further distinct wakers (shared sources only) spill into
+/// `rest`.
+#[derive(Default)]
+struct WakerSet {
+    first: Option<Waker>,
+    rest: Vec<Waker>,
+}
+
+impl WakerSet {
+    fn len(&self) -> usize {
+        usize::from(self.first.is_some()) + self.rest.len()
+    }
+
+    fn contains(&self, waker: &Waker) -> bool {
+        self.first
+            .iter()
+            .chain(&self.rest)
+            .any(|w| w.will_wake(waker))
+    }
+
+    /// Parks `waker`. In [`Waiters::Shared`] mode a waker that is already
+    /// parked (by `Waker::will_wake`) is not added again, so the set holds at
+    /// most one waker per polling task. If the set is full (`cap`), every
+    /// parked waker moves to `overflow` to be woken spuriously, which is
+    /// always safe: each re-polls and parks again.
+    fn park(&mut self, waker: &Waker, mode: Waiters, cap: usize, overflow: &mut Vec<Waker>) {
+        match mode {
+            Waiters::Single => match &self.first {
+                Some(w) if w.will_wake(waker) => {}
+                _ => self.first = Some(waker.clone()),
+            },
+            Waiters::Shared => {
+                if self.contains(waker) {
+                    return;
+                }
+                if self.len() >= cap {
+                    self.drain_into(overflow);
+                }
+                if self.first.is_none() {
+                    self.first = Some(waker.clone());
+                } else {
+                    self.rest.push(waker.clone());
+                }
+            }
+        }
+    }
+
+    /// Removes `waker` again (it is waking up with an error instead).
+    fn remove(&mut self, waker: &Waker) {
+        if self.first.as_ref().is_some_and(|w| w.will_wake(waker)) {
+            self.first = self.rest.pop();
+        }
+        self.rest.retain(|w| !w.will_wake(waker));
+    }
+
+    /// Moves every parked waker into `out` (keeping `rest`'s capacity).
+    fn drain_into(&mut self, out: &mut Vec<Waker>) {
+        out.extend(self.first.take());
+        out.append(&mut self.rest);
+    }
+}
+
 /// Per-registration readiness state.
 struct ScheduledIo {
     token: u64,
+    waiters: Waiters,
     state: Mutex<IoState>,
 }
 
 struct IoState {
     ready: [bool; 2],
     tick: [u64; 2],
-    wakers: [Option<Waker>; 2],
+    wakers: [WakerSet; 2],
     shutdown: bool,
     /// Whether the socket has been added to the OS poller yet.
     in_poller: bool,
@@ -80,9 +169,7 @@ impl ScheduledIo {
             if hit {
                 state.ready[dir] = true;
                 state.tick[dir] = state.tick[dir].wrapping_add(1);
-                if let Some(waker) = state.wakers[dir].take() {
-                    wake.push(waker);
-                }
+                state.wakers[dir].drain_into(wake);
             }
         }
     }
@@ -90,7 +177,9 @@ impl ScheduledIo {
     fn shutdown(&self, wake: &mut Vec<Waker>) {
         let mut state = lock(&self.state);
         state.shutdown = true;
-        wake.extend(state.wakers.iter_mut().filter_map(Option::take));
+        for set in &mut state.wakers {
+            set.drain_into(wake);
+        }
     }
 }
 
@@ -109,7 +198,7 @@ struct Slab {
 }
 
 impl Slab {
-    fn insert(&mut self, initial_ready: bool) -> io::Result<Arc<ScheduledIo>> {
+    fn insert(&mut self, initial_ready: bool, waiters: Waiters) -> io::Result<Arc<ScheduledIo>> {
         if self.len >= MAX_REGISTRATIONS {
             return Err(io::Error::other(format!(
                 "reactor registration limit reached ({MAX_REGISTRATIONS} sockets)"
@@ -129,10 +218,11 @@ impl Slab {
         let token = (u64::from(entry.generation) << 32) | index as u64;
         let io = Arc::new(ScheduledIo {
             token,
+            waiters,
             state: Mutex::new(IoState {
                 ready: [initial_ready; 2],
                 tick: [0; 2],
-                wakers: [None, None],
+                wakers: [WakerSet::default(), WakerSet::default()],
                 shutdown: false,
                 in_poller: false,
             }),
@@ -173,17 +263,23 @@ pub(crate) struct Reactor {
     events: Mutex<Vec<ReadyEvent>>,
     slab: Mutex<Slab>,
     shutdown: AtomicBool,
+    /// Bound of a [`Waiters::Shared`] direction's waker set.
+    max_waiters: usize,
 }
 
 impl Reactor {
-    /// Creates the OS poller; `max_events` bounds events drained per turn.
-    pub(crate) fn new(max_events: usize) -> io::Result<Self> {
-        let max_events = max_events.max(1);
+    /// Creates the OS poller; `max_events` bounds events drained per turn
+    /// (clamped to `1..=MAX_EVENTS_PER_TURN`), and `max_waiters` bounds the
+    /// waker set of each shared source direction (clamped to
+    /// `1..=MAX_WAITERS`).
+    pub(crate) fn new(max_events: usize, max_waiters: usize) -> io::Result<Self> {
+        let max_events = max_events.clamp(1, MAX_EVENTS_PER_TURN);
         Ok(Self {
             poller: sys::Poller::new(max_events)?,
             events: Mutex::new(Vec::with_capacity(max_events)),
             slab: Mutex::new(Slab::default()),
             shutdown: AtomicBool::new(false),
+            max_waiters: max_waiters.clamp(1, MAX_WAITERS),
         })
     }
 
@@ -204,9 +300,7 @@ impl Reactor {
         }
         events.clear();
         *lock(&self.events) = events;
-        for waker in wake {
-            waker.wake();
-        }
+        crate::task::wake_all(wake);
         waited
     }
 
@@ -229,9 +323,7 @@ impl Reactor {
         for io in sources {
             io.shutdown(&mut wake);
         }
-        for waker in wake {
-            waker.wake();
-        }
+        crate::task::wake_all(wake);
     }
 }
 
@@ -253,13 +345,18 @@ impl Registration {
     ///
     /// `initial_ready` seeds both directions as ready (optimistic, for sockets
     /// that may already have data); `false` waits for the first OS event.
-    pub(crate) fn new(reactor: Arc<Reactor>, initial_ready: bool) -> io::Result<Self> {
+    /// `waiters` says whether several tasks may wait on one direction.
+    pub(crate) fn new(
+        reactor: Arc<Reactor>,
+        initial_ready: bool,
+        waiters: Waiters,
+    ) -> io::Result<Self> {
         let io = {
             let mut slab = lock(&reactor.slab);
             if reactor.shutdown.load(Ordering::SeqCst) {
                 return Err(shutting_down_error());
             }
-            slab.insert(initial_ready)?
+            slab.insert(initial_ready, waiters)?
         };
         Ok(Self {
             reactor,
@@ -289,13 +386,30 @@ impl Registration {
 
     /// Returns the current readiness tick once `dir` is ready, or registers
     /// `cx`'s waker, adds `handle` to the OS poller if needed, and arms it.
+    ///
+    /// Spends one unit of the cooperative budget when it returns `Ready`
+    /// (readiness or error); with the budget exhausted it returns `Pending`
+    /// and schedules a deferred wakeup instead, keeping readiness intact.
     pub(crate) fn poll_ready(
         &self,
         cx: &mut Context<'_>,
         dir: Direction,
         handle: sys::Handle<'_>,
     ) -> Poll<io::Result<u64>> {
+        ready!(crate::task::poll_budget(cx));
+        let result = ready!(self.poll_ready_unbudgeted(cx, dir, handle));
+        crate::task::consume_budget();
+        Poll::Ready(result)
+    }
+
+    fn poll_ready_unbudgeted(
+        &self,
+        cx: &mut Context<'_>,
+        dir: Direction,
+        handle: sys::Handle<'_>,
+    ) -> Poll<io::Result<u64>> {
         let d = dir.index();
+        let mut overflow = Vec::new();
         {
             let mut state = lock(&self.io.state);
             if state.shutdown || self.reactor.shutdown.load(Ordering::SeqCst) {
@@ -304,20 +418,26 @@ impl Registration {
             if state.ready[d] {
                 return Poll::Ready(Ok(state.tick[d]));
             }
-            match &state.wakers[d] {
-                Some(waker) if waker.will_wake(cx.waker()) => {}
-                _ => state.wakers[d] = Some(cx.waker().clone()),
-            }
+            state.wakers[d].park(
+                cx.waker(),
+                self.io.waiters,
+                self.reactor.max_waiters,
+                &mut overflow,
+            );
             if !state.in_poller {
                 // Under the state lock, so the read and write halves never
                 // add the socket twice.
                 if let Err(e) = self.reactor.poller.register(handle, self.io.token) {
-                    state.wakers[d] = None;
+                    state.wakers[d].remove(cx.waker());
+                    drop(state);
+                    crate::task::wake_all(overflow);
                     return Poll::Ready(Err(e));
                 }
                 state.in_poller = true;
             }
         }
+        // Wakers evicted from a full shared set re-poll and park again.
+        crate::task::wake_all(overflow);
         self.reactor.poller.arm(self.io.token, dir.interest());
         Poll::Pending
     }
@@ -337,6 +457,10 @@ impl Registration {
 
     /// Runs `op` once `dir` is ready, retrying `Interrupted` and turning
     /// `WouldBlock` into a readiness wait.
+    ///
+    /// Every `Ready` result (data, EOF, or any error such as `EMFILE`) spends
+    /// one unit of the cooperative budget; with the budget exhausted this
+    /// returns `Pending` without running `op` (see [`Registration::poll_ready`]).
     pub(crate) fn poll_io<R>(
         &self,
         cx: &mut Context<'_>,
@@ -344,14 +468,20 @@ impl Registration {
         handle: sys::Handle<'_>,
         mut op: impl FnMut() -> io::Result<R>,
     ) -> Poll<io::Result<R>> {
-        loop {
-            let tick = ready!(self.poll_ready(cx, dir, handle))?;
+        ready!(crate::task::poll_budget(cx));
+        let result = loop {
+            let tick = match ready!(self.poll_ready_unbudgeted(cx, dir, handle)) {
+                Ok(tick) => tick,
+                Err(e) => break Err(e),
+            };
             match op() {
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => self.clear_ready(dir, tick),
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-                result => return Poll::Ready(result),
+                result => break result,
             }
-        }
+        };
+        crate::task::consume_budget();
+        Poll::Ready(result)
     }
 
     /// Runs `op` immediately; on `WouldBlock` clears readiness so the next

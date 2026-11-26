@@ -1432,3 +1432,52 @@ fn spawned_task_future_with_deque_state_round_trips() {
         assert_eq!(out, VecDeque::from([3, 4, 5, 1, 2]));
     });
 }
+
+// --- G5 regressions -----------------------------------------------------------
+
+/// A waker whose `wake` panics, standing in for a buggy user waker.
+struct PanickingWaker;
+
+impl Wake for PanickingWaker {
+    fn wake(self: Arc<Self>) {
+        panic!("panicking waker boom");
+    }
+}
+
+#[test]
+fn panicking_waker_does_not_lose_other_deferred_wakeups() {
+    watchdog(|| {
+        let rt = runtime();
+        let sibling = rt.spawn(async {
+            task::yield_now().await;
+            7usize
+        });
+        // The root defers a panicking waker first; the sibling's `yield_now`
+        // waker joins the same deferred batch behind it.
+        let caught = panic::catch_unwind(AssertUnwindSafe(|| {
+            rt.block_on(async {
+                let waker = Waker::from(Arc::new(PanickingWaker));
+                let mut cx = Context::from_waker(&waker);
+                let mut yielded = task::yield_now();
+                assert!(Pin::new(&mut yielded).poll(&mut cx).is_pending());
+                std::future::pending::<()>().await;
+            })
+        }));
+        let payload = caught.expect_err("the panicking waker's panic reaches the caller");
+        assert_eq!(panic_message(&*payload), "panicking waker boom");
+        // The sibling queued behind the panicking waker was still woken.
+        assert_eq!(rt.block_on(sibling).unwrap(), 7);
+    });
+}
+
+#[test]
+fn huge_io_event_limit_is_clamped_instead_of_allocated() {
+    watchdog(|| {
+        let limits = Limits::new().with_max_io_events_per_tick(usize::MAX);
+        let rt = runtime_with(limits);
+        // `limits()` reports the configured value; only the buffer is clamped.
+        assert_eq!(rt.limits().max_io_events_per_tick, usize::MAX);
+        let out = rt.block_on(async { task::spawn(async { 5u8 }).await.unwrap() });
+        assert_eq!(out, 5);
+    });
+}

@@ -32,7 +32,21 @@
 //! - [`Limits::max_polls_per_tick`]: `64` task polls before yielding to I/O and
 //!   re-checking the root `block_on` future (values of `0` are clamped to `1`).
 //! - [`Limits::max_io_events_per_tick`]: `1_024` OS I/O events drained per
-//!   reactor wait turn (values of `0` are clamped to `1`).
+//!   reactor wait turn (values of `0` are clamped to `1`, values above
+//!   `65_536` are clamped to `65_536`).
+//!
+//! # Cooperative I/O budget
+//!
+//! A future whose sockets are always ready (a fast peer, a permanent `accept`
+//! error such as `EMFILE`, a read loop at EOF) would otherwise never return
+//! `Poll::Pending`. Every task poll and every poll of the root `block_on`
+//! future therefore gets a budget of `128` ready I/O operations on
+//! `akku::net` sockets (successes and errors both count). Once it is spent,
+//! the next socket operation returns `Poll::Pending` after scheduling a
+//! wakeup behind the next reactor turn, exactly like [`yield_now`], so sibling
+//! tasks, the root future, and I/O events make progress. Readiness is kept,
+//! so no event is lost. Futures polled outside an `akku::task` runtime are
+//! not budgeted.
 //!
 //! # Examples
 //!
@@ -99,7 +113,10 @@ pub struct Limits {
     pub max_polls_per_tick: usize,
     /// Maximum OS I/O events drained per reactor wait turn.
     ///
-    /// Default: `1_024`.
+    /// Default: `1_024`. The reactor clamps the value to `1..=65_536`
+    /// internally (`65_536` is its socket registration cap, so a larger event
+    /// buffer could never fill); [`Runtime::limits`] still reports the
+    /// configured value.
     pub max_io_events_per_tick: usize,
 }
 
@@ -299,8 +316,10 @@ impl From<SpawnError> for io::Error {
 type Driver = Arc<crate::net::reactor::Reactor>;
 
 #[cfg(not(target_arch = "wasm32"))]
-fn new_driver(max_events: usize) -> io::Result<Driver> {
-    crate::net::reactor::Reactor::new(max_events).map(Arc::new)
+fn new_driver(max_events: usize, max_tasks: usize) -> io::Result<Driver> {
+    // Each task, plus the root future, parks at most one waker per socket
+    // direction, which bounds a shared listener's waiter set.
+    crate::net::reactor::Reactor::new(max_events, max_tasks.saturating_add(1)).map(Arc::new)
 }
 
 /// `wasm32` has no OS reactor; a plain parker stands in.
@@ -308,7 +327,7 @@ fn new_driver(max_events: usize) -> io::Result<Driver> {
 type Driver = Parker;
 
 #[cfg(target_arch = "wasm32")]
-fn new_driver(_max_events: usize) -> io::Result<Driver> {
+fn new_driver(_max_events: usize, _max_tasks: usize) -> io::Result<Driver> {
     Ok(Parker::new())
 }
 
@@ -402,7 +421,7 @@ pub(crate) struct Shared {
 
 impl Shared {
     fn new(limits: Limits) -> io::Result<Arc<Self>> {
-        let driver = new_driver(limits.max_io_events_per_tick.max(1))?;
+        let driver = new_driver(limits.max_io_events_per_tick.max(1), limits.max_tasks)?;
         Ok(Arc::new(Self {
             limits,
             poll_budget: limits.max_polls_per_tick.max(1),
@@ -506,7 +525,7 @@ impl Shared {
         }
         let waker = Waker::from(Arc::clone(&task));
         let mut cx = Context::from_waker(&waker);
-        match harness.poll(&mut cx) {
+        match with_budget(|| harness.poll(&mut cx)) {
             Poll::Ready(()) => self.finish(&task, harness),
             Poll::Pending => {
                 *lock(&task.harness) = Some(harness);
@@ -581,9 +600,7 @@ impl Shared {
         }
 
         let deferred = std::mem::take(&mut *lock(&self.deferred));
-        for waker in deferred {
-            waker.wake();
-        }
+        wake_all(deferred);
     }
 
     /// Cancels every unfinished task and shuts the driver down.
@@ -867,6 +884,104 @@ pub(crate) fn current_reactor() -> io::Result<Arc<crate::net::reactor::Reactor>>
     }
 }
 
+// --- Cooperative budget and batch wakeups ----------------------------------------
+
+/// Ready I/O operations one task poll (or one root-future poll) may complete
+/// before socket operations return `Pending` (the same value as tokio's
+/// `coop` budget).
+const COOP_BUDGET: u32 = 128;
+
+thread_local! {
+    /// Remaining budget of the poll running on this thread; `None` outside a
+    /// runtime poll (for example a socket polled by a foreign executor), which
+    /// is unconstrained.
+    static BUDGET: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
+}
+
+/// Runs one task or root poll with a fresh budget, restoring the previous
+/// value afterwards, also when the poll unwinds.
+fn with_budget<R>(poll: impl FnOnce() -> R) -> R {
+    struct Restore(Option<u32>);
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let previous = self.0;
+            let _ = BUDGET.try_with(|budget| budget.set(previous));
+        }
+    }
+
+    let previous = BUDGET
+        .try_with(|budget| budget.replace(Some(COOP_BUDGET)))
+        .ok()
+        .flatten();
+    let _restore = Restore(previous);
+    poll()
+}
+
+/// Returns `Pending` and schedules a deferred wakeup of `cx`'s waker once the
+/// current poll has spent its budget; `Ready` otherwise.
+///
+/// The wakeup runs after the next reactor turn (as for [`yield_now`]), so the
+/// caller goes behind every task that is already queued.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn poll_budget(cx: &mut Context<'_>) -> Poll<()> {
+    let exhausted = BUDGET
+        .try_with(|budget| budget.get() == Some(0))
+        .unwrap_or(false);
+    if exhausted {
+        defer_wake(cx.waker());
+        Poll::Pending
+    } else {
+        Poll::Ready(())
+    }
+}
+
+/// Spends one unit of the current poll's budget after a ready I/O operation
+/// (success or error).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn consume_budget() {
+    let _ = BUDGET.try_with(|budget| {
+        if let Some(left) = budget.get() {
+            budget.set(Some(left.saturating_sub(1)));
+        }
+    });
+}
+
+/// Wakes `waker` after the next reactor turn when called inside a runtime,
+/// or immediately otherwise. A waker equal to the last deferred one is not
+/// queued twice, so a future that hits an exhausted budget repeatedly in one
+/// poll cannot grow the deferred list.
+fn defer_wake(waker: &Waker) {
+    match current() {
+        Some(shared) => {
+            let mut deferred = lock(&shared.deferred);
+            if !deferred.last().is_some_and(|last| last.will_wake(waker)) {
+                deferred.push(waker.clone());
+            }
+        }
+        None => waker.wake_by_ref(),
+    }
+}
+
+/// Wakes every waker in `wakers`, even if some of them panic: each `wake`
+/// runs in `catch_unwind`, and the first panic is resumed after the whole
+/// batch was woken (later payloads are dropped, also inside `catch_unwind`).
+pub(crate) fn wake_all(wakers: impl IntoIterator<Item = Waker>) {
+    let mut first_panic = None;
+    for waker in wakers {
+        if let Err(payload) = panic::catch_unwind(AssertUnwindSafe(move || waker.wake())) {
+            if first_panic.is_none() {
+                first_panic = Some(payload);
+            } else {
+                let _ = panic::catch_unwind(AssertUnwindSafe(move || drop(payload)));
+            }
+        }
+    }
+    if let Some(payload) = first_panic {
+        panic::resume_unwind(payload);
+    }
+}
+
 /// Waker of the root `block_on` future.
 struct RootWaker {
     woken: AtomicBool,
@@ -924,9 +1039,21 @@ impl Runtime {
     /// Runs `future` to completion on the current thread, driving all spawned
     /// tasks and I/O events until `future` resolves.
     ///
+    /// # Blocking across threads
+    ///
+    /// One thread drives a runtime at a time. A `block_on` call on a second
+    /// thread blocks until the first one returns, and it does **not** poll its
+    /// own root future while it waits. A root future that only completes
+    /// after another thread's concurrent `block_on` root has run therefore
+    /// deadlocks; use [`Runtime::spawn`] to hand such work to the driving
+    /// thread instead.
+    ///
     /// # Panics
     ///
-    /// Panics if called from inside another active `block_on` on the same thread.
+    /// Panics if called from inside another active `block_on` on the same
+    /// thread. A panic of the root future, or of a user waker woken while
+    /// this call drives the runtime, propagates to the caller; the runtime
+    /// stays usable afterwards.
     #[track_caller]
     pub fn block_on<F: Future>(&self, future: F) -> F::Output {
         let _enter = enter(&self.shared);
@@ -940,7 +1067,7 @@ impl Runtime {
         let mut future = pin!(future);
         loop {
             if root.woken.swap(false, Ordering::SeqCst) {
-                if let Poll::Ready(output) = future.as_mut().poll(&mut cx) {
+                if let Poll::Ready(output) = with_budget(|| future.as_mut().poll(&mut cx)) {
                     return output;
                 }
             }
@@ -996,6 +1123,16 @@ impl Drop for Runtime {
 /// Awaiting a `JoinHandle<T>` resolves to `Result<T, JoinError>`. Dropping a
 /// `JoinHandle<T>` **detaches** the task so it continues running until
 /// completion or runtime shutdown.
+///
+/// A task that owns an `Arc<Runtime>` of its own runtime (or any reference
+/// cycle through `JoinHandle`s) keeps that runtime and its reactor alive, as
+/// in tokio; avoid such cycles.
+///
+/// # Panics
+///
+/// Polling a `JoinHandle` again after it returned `Poll::Ready` panics
+/// (`"JoinHandle polled again after it returned its result"`), as for any
+/// completed future.
 #[must_use = "dropping a JoinHandle detaches the task; await it or call abort()"]
 pub struct JoinHandle<T> {
     join: Arc<JoinState<T>>,
@@ -1133,10 +1270,7 @@ impl Future for YieldNow {
             return Poll::Ready(());
         }
         self.yielded = true;
-        match current() {
-            Some(shared) => lock(&shared.deferred).push(cx.waker().clone()),
-            None => cx.waker().wake_by_ref(),
-        }
+        defer_wake(cx.waker());
         Poll::Pending
     }
 }

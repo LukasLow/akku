@@ -31,6 +31,13 @@ pub(crate) const SOCKET_ERROR: i32 = -1;
 pub(crate) const WSAEWOULDBLOCK: i32 = 10035;
 pub(crate) const WSAEINPROGRESS: i32 = 10036;
 pub(crate) const WSAEINTR: i32 = 10004;
+pub(crate) const WSAEINVAL: i32 = 10022;
+pub(crate) const WSAEPROTOTYPE: i32 = 10041;
+/// `WSASocketW` flags (`winsock2.h`); std uses the same pair.
+pub(crate) const WSA_FLAG_OVERLAPPED: u32 = 0x01;
+pub(crate) const WSA_FLAG_NO_HANDLE_INHERIT: u32 = 0x80;
+/// `SetHandleInformation` mask/flag (`handleapi.h`).
+pub(crate) const HANDLE_FLAG_INHERIT: u32 = 0x01;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -100,8 +107,26 @@ const _: () = {
 unsafe extern "system" {
     fn WSAPoll(fdarray: *mut WsaPollFd, fds: u32, timeout: i32) -> i32;
     fn WSAGetLastError() -> i32;
-    fn socket(af: i32, ty: i32, protocol: i32) -> usize;
+    // `SOCKET WSASocketW(int, int, int, LPWSAPROTOCOL_INFOW, GROUP, DWORD)`;
+    // `GROUP` and `DWORD` are `u32`. The protocol-info pointer is always null
+    // here, so it is declared as an untyped pointer.
+    fn WSASocketW(
+        af: i32,
+        ty: i32,
+        protocol: i32,
+        protocol_info: *const c_void,
+        group: u32,
+        flags: u32,
+    ) -> usize;
     fn connect(s: usize, name: *const c_void, namelen: i32) -> i32;
+}
+
+// SAFETY: matches `BOOL SetHandleInformation(HANDLE, DWORD, DWORD)` from
+// `kernel32` (`BOOL` is `i32`, `HANDLE` a pointer, `DWORD` `u32`), as declared
+// by std and `windows-sys`; callers pass an open socket handle.
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn SetHandleInformation(handle: *mut c_void, mask: u32, flags: u32) -> i32;
 }
 
 const ARM_READ: u8 = 0b01;
@@ -347,24 +372,66 @@ impl Poller {
     }
 }
 
+/// Calls `WSASocketW` for a TCP socket with `flags`, adopting the result.
+fn wsa_socket(family: i32, flags: u32) -> Result<OwnedSocket, i32> {
+    // SAFETY: plain integer arguments plus a null protocol-info pointer,
+    // which `WSASocketW` documents as "use the first matching provider";
+    // Winsock is initialized because a runtime (and thus the std wake socket
+    // pair) exists.
+    let raw = unsafe { WSASocketW(family, SOCK_STREAM, IPPROTO_TCP, std::ptr::null(), 0, flags) };
+    if raw == INVALID_SOCKET {
+        // SAFETY: `WSAGetLastError` has no preconditions.
+        return Err(unsafe { WSAGetLastError() });
+    }
+    // SAFETY: `raw` is a fresh, valid socket (checked `!= INVALID_SOCKET`)
+    // that nothing else owns; `OwnedSocket` takes sole ownership and closes
+    // it on every later error path.
+    Ok(unsafe { OwnedSocket::from_raw_socket(raw as RawSocket) })
+}
+
+/// Creates a TCP socket that child processes do not inherit, exactly as std
+/// does (`library/std/src/sys/net/connection/socket/windows.rs`, `Socket::new`):
+/// `WSA_FLAG_NO_HANDLE_INHERIT` first, and on systems that reject the flag
+/// (`WSAEINVAL` / `WSAEPROTOTYPE`) a socket without it whose handle
+/// inheritance is cleared with `SetHandleInformation`.
+fn new_tcp_socket(family: i32) -> io::Result<OwnedSocket> {
+    match wsa_socket(family, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT) {
+        Ok(socket) => Ok(socket),
+        Err(code) if code == WSAEINVAL || code == WSAEPROTOTYPE => {
+            let socket =
+                wsa_socket(family, WSA_FLAG_OVERLAPPED).map_err(io::Error::from_raw_os_error)?;
+            clear_inherit(&socket)?;
+            Ok(socket)
+        }
+        Err(code) => Err(io::Error::from_raw_os_error(code)),
+    }
+}
+
+/// Clears `HANDLE_FLAG_INHERIT` on `socket` (std's `set_no_inherit`).
+fn clear_inherit(socket: &OwnedSocket) -> io::Result<()> {
+    // SAFETY: `socket` is open and borrowed for the duration of the call; a
+    // Winsock `SOCKET` is a kernel handle that `SetHandleInformation` accepts
+    // (std does the same in `OwnedSocket::set_no_inherit`).
+    let ok = unsafe {
+        SetHandleInformation(
+            socket.as_raw_socket() as usize as *mut c_void,
+            HANDLE_FLAG_INHERIT,
+            0,
+        )
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 /// Starts a non-blocking TCP connect; returns `(stream, connected_now)`.
 pub(crate) fn connect_nonblocking(addr: SocketAddr) -> io::Result<(TcpStream, bool)> {
     let family = match addr {
         SocketAddr::V4(_) => AF_INET,
         SocketAddr::V6(_) => AF_INET6,
     };
-    // SAFETY: `socket` takes plain integer arguments; Winsock is initialized
-    // because a runtime (and thus the std wake socket pair) exists.
-    let raw = unsafe { socket(family, SOCK_STREAM, IPPROTO_TCP) };
-    if raw == INVALID_SOCKET {
-        // SAFETY: `WSAGetLastError` has no preconditions.
-        return Err(io::Error::from_raw_os_error(unsafe { WSAGetLastError() }));
-    }
-    // SAFETY: `raw` is a fresh, valid socket (checked `!= INVALID_SOCKET`)
-    // that nothing else owns; `OwnedSocket` takes sole ownership and closes
-    // it on error.
-    let owned = unsafe { OwnedSocket::from_raw_socket(raw as RawSocket) };
-    let stream = TcpStream::from(owned);
+    let stream = TcpStream::from(new_tcp_socket(family)?);
     // `FIONBIO` through the safe std API.
     stream.set_nonblocking(true)?;
     let sock = usize::try_from(stream.as_raw_socket())
@@ -393,6 +460,8 @@ pub(crate) fn connect_nonblocking(addr: SocketAddr) -> io::Result<(TcpStream, bo
             let sa = SockAddrIn6 {
                 sin6_family: AF_INET6 as u16,
                 sin6_port: a.port().to_be(),
+                // Host byte order, exactly as std's `socket_addr_to_c` does,
+                // so `peer_addr()` round-trips this value unchanged.
                 sin6_flowinfo: a.flowinfo(),
                 sin6_addr: a.ip().octets(),
                 sin6_scope_id: a.scope_id(),
@@ -417,5 +486,60 @@ pub(crate) fn connect_nonblocking(addr: SocketAddr) -> io::Result<(TcpStream, bo
     match code {
         WSAEWOULDBLOCK | WSAEINPROGRESS | WSAEINTR => Ok((stream, false)),
         _ => Err(io::Error::from_raw_os_error(code)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Windows-only checks of handle inheritance, which the public API cannot
+    //! observe without spawning child processes.
+
+    use super::*;
+
+    // SAFETY: matches `BOOL GetHandleInformation(HANDLE, LPDWORD)` from
+    // `kernel32` (`BOOL` is `i32`, `LPDWORD` a `*mut u32`), as declared by
+    // `windows-sys`; the test passes an open handle and a valid out pointer.
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetHandleInformation(handle: *mut c_void, flags: *mut u32) -> i32;
+    }
+
+    fn inherit_flag(socket: &impl AsRawSocket) -> u32 {
+        let mut flags = 0u32;
+        // SAFETY: `socket` is open for the duration of the call, and `flags`
+        // is a valid, writable `u32` on this stack frame.
+        let ok = unsafe {
+            GetHandleInformation(socket.as_raw_socket() as usize as *mut c_void, &mut flags)
+        };
+        assert_ne!(
+            ok,
+            0,
+            "GetHandleInformation failed: {}",
+            io::Error::last_os_error()
+        );
+        flags & HANDLE_FLAG_INHERIT
+    }
+
+    /// A std listener: initializes Winsock and gives `connect` a target.
+    fn listener() -> TcpListener {
+        TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap()
+    }
+
+    #[test]
+    fn connect_socket_is_not_inheritable() {
+        let listener = listener();
+        let (stream, _) = connect_nonblocking(listener.local_addr().unwrap()).unwrap();
+        assert_eq!(inherit_flag(&stream), 0);
+    }
+
+    #[test]
+    fn fallback_clears_inheritance_of_a_plain_socket() {
+        let _winsock = listener();
+        // Without `WSA_FLAG_NO_HANDLE_INHERIT` a socket is inheritable, which
+        // is what this check would catch in `connect_nonblocking`.
+        let socket = wsa_socket(AF_INET, WSA_FLAG_OVERLAPPED).unwrap();
+        assert_eq!(inherit_flag(&socket), HANDLE_FLAG_INHERIT);
+        clear_inherit(&socket).unwrap();
+        assert_eq!(inherit_flag(&socket), 0);
     }
 }

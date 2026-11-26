@@ -387,6 +387,8 @@ pub(crate) fn connect_nonblocking(addr: SocketAddr) -> io::Result<(std::net::Tcp
                 sin6_len: std::mem::size_of::<SockAddrIn6>() as u8,
                 sin6_family: AF_INET6 as u8,
                 sin6_port: a.port().to_be(),
+                // Host byte order, exactly as std's `socket_addr_to_c` does,
+                // so `peer_addr()` round-trips this value unchanged.
                 sin6_flowinfo: a.flowinfo(),
                 sin6_addr: a.ip().octets(),
                 sin6_scope_id: a.scope_id(),

@@ -13,7 +13,7 @@
 - **No timers (`sleep`, `sleep_until`, `interval`, `timeout`) in `akku::task`.** Human decision (`docs/forks/tokio-axum.md` §9.5): timers live in `akku::time` (Phase 3), driven by an internal timer wheel hook inside the runtime parker.
 - **No `#[akku::task::main]` proc macro in Phase 1.** Deferred to Phase 4 (`akku-drive` addition) once multi-threaded `Runtime` lands; `akku::task::block_on(async { ... })` is pleasant without macros (`AGENTS.md` rule 7).
 - **No `LocalSet` / `!Send` `spawn_local` in Phase 1.** Requiring `F: Future + Send + 'static` on `spawn` from day one avoids a breaking signature change when Phase 4 introduces multi-threaded execution. Non-`Send` local spawning is tracked in `_dev/TODO.md`.
-- **No task-local storage, runtime metrics/tracing hooks, or cooperative poll-budget macros (`tokio::task::coop`) in Phase 1.** Fairness is enforced by `Limits::max_polls_per_tick` and deferred `yield_now()`; instrumentation belongs to `akku::trace` (Wave 3).
+- **No task-local storage, runtime metrics/tracing hooks, or public cooperative poll-budget API (`tokio::task::coop::{consume_budget, unconstrained}`) in Phase 1.** Fairness has three layers: `Limits::max_polls_per_tick` bounds the task polls between reactor turns, deferred `yield_now()` lets a task yield explicitly, and an internal, non-configurable cooperative budget of `128` ready `akku::net` operations per task poll and per root poll bounds the work inside one poll (§G5 fixes 1). Instrumentation belongs to `akku::trace` (Wave 3).
 - **No external runtime dependencies (`tokio`, `async-task`, `concurrent-queue`, `parking_lot`).** Pure `std` only.
 - **No `wasm32` browser executor bridge in Phase 1.** `wasm32` `spawn` via microtasks/promises is planned for Phase 7 (`docs/forks/tokio-axum.md` §8); in Phase 1 `akku::task` compiles on `wasm32` (with pure `block_on` only or `Unsupported` for OS-blocking park) without compromising native paths (`CONCEPT.md` §6).
 
@@ -112,7 +112,7 @@ impl Limits {
 }
 ```
 
-Values of `0` for `max_polls_per_tick` or `max_io_events_per_tick` are clamped internally to `1` so a runtime can never livelock on a misconfigured limit (`max_tasks = 0` validly forbids all `spawn` calls while still allowing `block_on`).
+Values of `0` for `max_polls_per_tick` or `max_io_events_per_tick` are clamped internally to `1` so a runtime can never livelock on a misconfigured limit (`max_tasks = 0` validly forbids all `spawn` calls while still allowing `block_on`). `max_io_events_per_tick` is also clamped to at most `65_536` (the reactor's registration cap), so a huge value cannot make `Runtime::with_limits` abort on an event-buffer allocation (§G5 fixes 4).
 
 ### Error types (`JoinError`, `SpawnError`)
 
@@ -339,7 +339,7 @@ These are clarifications of points §Public API leaves open, pinned by `tests.rs
 5. `SpawnError::ShuttingDown` has no public trigger in Phase 1, so G3 tests only its `Display`. G4 may add a behavioral test, for example a task destructor that spawns during `Runtime::drop`.
 6. Spawned tasks get their first poll in FIFO spawn order. `Runtime::spawn` called outside `block_on` queues the task, which first runs on the next `block_on`.
 7. `yield_now()` polled outside any runtime calls `wake_by_ref` immediately, returns `Pending` once, and then returns `Ready`. Like Tokio, it defers the wake only inside a runtime.
-8. `Runtime::limits()` returns the configured values. A `0` poll or I/O budget is clamped to `1` internally only, so `limits()` still reports `0`.
+8. `Runtime::limits()` returns the configured values. A `0` poll or I/O budget is clamped to `1` internally only, so `limits()` still reports `0`. The same holds for the upper `65_536` clamp of `max_io_events_per_tick`.
 
 ## G4 implementation notes (2026-11-26)
 
@@ -350,3 +350,12 @@ These are implementation details. They change no decision above.
 3. `abort()` uses a single CAS loop on `Task::state` to set `CANCELLED` and transition `IDLE -> SCHEDULED` (enqueueing the task) or `RUNNING -> NOTIFIED` in one atomic RMW (no-op if `DONE` or already `SCHEDULED|CANCELLED` / `NOTIFIED|CANCELLED`). `run_task()` claims `SCHEDULED` via CAS on the same atomic, observing `CANCELLED` without any store-buffering race, and preserves `CANCELLED` via CAS when re-queueing from `RUNNING`/`NOTIFIED` after `Poll::Pending`. When `CANCELLED` is observed before polling, the executor drops the future on the runtime thread without polling it again, so a panic in its destructor is reported as `JoinError::is_panic()`.
 4. `block_on` serializes drivers through a `drive` mutex, so another thread blocks instead of polling concurrently. Nested calls are detected through the thread-local context before that lock is taken, which means a nested call panics instead of deadlocking. The driver parks in the reactor only after it stores `parked = true` and then finds the run queue empty, the root not woken, and no deferred `yield_now` wakers.
 5. `Runtime::drop` marks the registry as shutting down, so `try_spawn` returns `ShuttingDown`. It then repeats drain-and-cancel over the live tasks and the run queue until both are empty, and finally calls `Reactor::shutdown`, which fails pending I/O waits with "akku::task runtime is shutting down".
+
+## G5 fixes (2026-11-26)
+
+Fixes for the G5 audit (`_dev/AUDIT.md`). They refine §Non-goals and §Public API; no public name was added.
+
+1. **Cooperative budget.** A thread-local `BUDGET: Cell<Option<u32>>` holds the remaining ready-I/O budget of the poll that is running. `Shared::run_task` and every root poll in `Runtime::block_on` run inside `with_budget`, which sets it to `COOP_BUDGET = 128` and restores the previous value on return or unwind. Outside a runtime poll the value is `None` (unconstrained). `akku::net` spends it through two crate-internal functions: `poll_budget(cx)` returns `Pending` once the budget is `0`, after deferring `cx`'s waker exactly like `yield_now` (so the task runs again after every queued task and after the next reactor turn); `consume_budget()` spends one unit after each ready operation, successful or not. Readiness is never cleared for a budget yield, so no edge is lost on `epoll`/`kqueue`. The deferred list skips a waker equal to the last one queued, so one poll that hits the exhausted budget many times does not grow it.
+2. **Batch wakeups survive a panicking waker.** `wake_all` wakes each waker of a batch (deferred `yield_now`/budget wakers in `Shared::tick`, reactor events in `Reactor::turn`, `Reactor::shutdown`, and evicted listener waiters) inside `catch_unwind`, then resumes the first panic after the whole batch has been woken. A user waker that panics still unwinds `block_on`, but no other task loses its wakeup.
+3. **Documentation.** `Runtime::block_on` documents that a concurrent `block_on` on another thread blocks without polling its own root future (G4 note 4), and `JoinHandle` documents the poll-after-completion panic and the runtime-leak cycle through an owned `Arc<Runtime>`.
+4. **`max_io_events_per_tick` clamp.** `net::reactor::Reactor::new` clamps the event buffer to `1..=65_536`.
