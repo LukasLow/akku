@@ -1,0 +1,3 @@
+kind: Added
+body: "`html::unescape` decodes HTML character references (decimal/hex numeric, Windows-1252 C1 remapping, the full WHATWG named-entity table with legacy no-semicolon forms) and borrows its input when there is nothing to decode."
+time: 2026-11-26T00:00:00Z

@@ -16,7 +16,7 @@
 | `akku::error` | `native` | yes | - | `@LukasLow` | Dynamic error wrapper with lazy context chaining, source traversal, and ergonomic bail/ensure macros. |
 | `akku::fs` | `native` | no | - | `@LukasLow` | Filesystem utilities: atomic writes, RAII temp files/dirs, recursive directory walking, and glob matching. |
 | `akku::hex` | `native` | yes | - | `@LukasLow` | Hexadecimal (Base16) encoding and case-insensitive decoding, with allocation-free slice variants. |
-| `akku::html` | `native` | yes | - | `@LukasLow` | Lightweight HTML response wrapper and text escaping helpers. |
+| `akku::html` | `native` | yes | - | `@LukasLow` | Lightweight HTML response wrapper and text escaping and unescaping helpers. |
 | `akku::http` | `adapter` | no | `http` | `@LukasLow` | HTTP server routing (backed by axum/tokio) and zero-dependency blocking HTTP/1.1 client. |
 | `akku::id` | `native` | yes | - | `@LukasLow` | Unique identifiers: RFC 9562 UUID v4/v7, monotonic ULIDs, and customizable NanoIDs. |
 | `akku::ini` | `native` | yes | - | `@LukasLow` | Zero-dependency INI configuration parser and writer with sections, escapes, and order preservation. |

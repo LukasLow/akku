@@ -2,6 +2,6 @@ name = "html"
 status = "native"
 wasm32 = true
 wave = 1
-summary = "Lightweight HTML response wrapper and text escaping helpers."
+summary = "Lightweight HTML response wrapper and text escaping and unescaping helpers."
 owners = ["LukasLow"]
 tags = ["html", "web", "markup"]
