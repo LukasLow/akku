@@ -139,7 +139,7 @@ Everything outside the families above lives directly under `akku::`.
 |---|---|
 | `akku::task` | Async tasks, runtime, cancellation (not `async`; timers and `timeout` live in `akku::time`) |
 | `akku::io` | `std::io` superset with async `AsyncRead`, `AsyncWrite`, `AsyncBufRead` traits |
-| `akku::sync` | Async/sync channels, semaphore, broadcast, watch (`std::sync` superset) |
+| `akku::sync` | `std::sync` superset + `AsyncMutex`, `AsyncRwLock`, `AsyncOnceCell`, `Semaphore`, `Notify`; channel modules `channel` (async MPMC), `oneshot`, `broadcast`, `watch` |
 | `akku::schedule` | Cron, retry/backoff |
 | `akku::cluster` | Node membership, gossip, discovery |
 | `akku::broker` | Pub/sub message broker |
@@ -234,7 +234,17 @@ async counterpart never takes that name:
   `Async*Ext` trait (`copy_to`, `read_to_end`);
 - **(c)** other async free functions may only use names `std` lacks in that
   module (`time::sleep`, `time::timeout`). Otherwise the operation goes on an
-  `Ext` trait. Never use an `_async` or `async_` suffix or prefix.
+  `Ext` trait. Never use an `_async` or `async_` suffix or prefix;
+- **(d)** a blocking twin of an async method on an akku type takes a
+  `blocking_` prefix (`blocking_lock`, `blocking_recv`); never a `_blocking`
+  suffix or `sync_`;
+- **(e)** an akku item never takes the name of a `std` item in the matching
+  module, stable or unstable at current stable Rust. Hence the async MPMC
+  channel is `akku::sync::channel`, never `mpsc` or `mpmc`. Recorded
+  exception: `akku::sync::oneshot` (std's is unstable). Once
+  `std::sync::oneshot` is stable and within the MSRV, `akku::sync::oneshot`
+  becomes a `std` superset and its async halves take the `Async` prefix (a
+  `0.0.x` breaking change).
 
 ### 4. No product names at level 1
 
