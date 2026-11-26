@@ -173,6 +173,10 @@ name = "sse"
 path = "src/sse/tests.rs"
 
 [[test]]
+name = "sync"
+path = "src/sync/tests.rs"
+
+[[test]]
 name = "task"
 path = "src/task/tests.rs"
 
