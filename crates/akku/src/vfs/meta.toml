@@ -1,0 +1,7 @@
+name = "vfs"
+status = "native"
+wasm32 = true
+wave = 2
+summary = "Protocol-neutral async virtual filesystem trait layer, in-memory backend, and conformance kit."
+owners = ["LukasLow"]
+tags = ["vfs", "filesystem", "async", "storage"]

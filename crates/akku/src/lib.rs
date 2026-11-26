@@ -92,6 +92,7 @@ pub mod time;
 pub mod toml;
 pub mod units;
 pub mod url;
+pub mod vfs;
 pub mod ws;
 pub mod xdr;
 pub mod xml;

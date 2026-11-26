@@ -185,6 +185,10 @@ name = "text"
 path = "src/text/tests.rs"
 
 [[test]]
+name = "vfs"
+path = "src/vfs/tests.rs"
+
+[[test]]
 name = "ws"
 path = "src/ws/tests.rs"
 
