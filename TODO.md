@@ -1,6 +1,6 @@
 # TODO.md — akku
 
-> **Current Snapshot:** **38 implemented modules** (+ `akku::diff` re-export = **39 / 87** entries from [`Namespace.md`](Namespace.md), **~84,400 LOC** pure Rust, `#![deny(unsafe_code)]` (sys-only allowlist), `#![deny(missing_docs)]`).
+> **Current Snapshot:** **41 implemented modules** (+ `akku::diff` re-export = **42 / 87** entries from [`Namespace.md`](Namespace.md), **~84,400 LOC** pure Rust, `#![deny(unsafe_code)]` (sys-only allowlist), `#![deny(missing_docs)]`).
 >
 > - **Wave 1:** 25 / 25 implemented (24 native zero-dep + `http` adapter)
 > - **Wave 2:** 11 / 17 implemented (`ws`, `sse`, `template`, `markdown`, `xml`, `yaml`, `text`+`diff`, `regex`, `archive`, `kv`, `cache`) — **Audit Bugfix Pass ✅ done (2026-11-24)**
@@ -61,7 +61,7 @@
 - [ ] Migration PRs batch-wise until all modules are on the same level.
 
 ### 0.9 megaghost-driven libs (after 0.2–0.4)
-- [ ] `net` and `xdr` (parallel) → `vfs` → `nfs::server` (read-only first). `xdr` done (PR #18).
+- [ ] `net` and `xdr` (parallel) → `vfs` → `nfs::server` (read-only first). `xdr` done (PR #18); `net` Phase 1 (TCP, native epoll/kqueue/WSAPoll) done together with `task` and `io` (PR #19).
 
 ### 0.10 Shipped-module gaps (from the Go stdlib gap doc, PR #10)
 > Shipped modules that miss an API their docs, Namespace, or Go equivalent imply. Each is a BugFix or a small NewLib-style extension of the existing module.
@@ -136,7 +136,7 @@ All findings below were verified line-by-line during read-only cross-audits. Fix
 > Note: Check [`AGENTS.md`](AGENTS.md) rules #7–#8 before starting `crypto` or `tls` (never blindly roll custom crypto; use audited MPL-2.0-compatible forks or pinned optional adapters).
 
 - [ ] `net`, `dns`, `quic` — flat modules: `net` (`std::net` superset: IP, TCP/UDP/Unix sockets, async), `dns`, `quic` (see 0.9 for megaghost order)
-- [ ] `task`, `sync`, `schedule` — async tasks, channels, semaphore, cron/retry/backoff (+ `wasm32` spawn)
+- [ ] `task`, `sync`, `schedule` — async tasks, channels, semaphore, cron/retry/backoff (+ `wasm32` spawn). `task` Phase 1 (single-thread runtime, `spawn`/`JoinHandle`, cooperative budget) shipped in PR #19; multi-thread, timers and `sync` follow in Phase 2+ ([`docs/forks/tokio-axum.md`](docs/forks/tokio-axum.md)).
 - [ ] `crypto` — `hash`, `rand`, `aead`, `sign`, `kem`, `kdf` (audited only)
 - [ ] `tls` — TLS config, streams, certificates (`#[doc(alias = "ssl")]`; never `akku::ssl`)
 - [ ] `auth` — `password` (Argon2id), `jwt`, `oauth2`, `totp`, `webauthn`, `session`, `acl` (over `crypto`)

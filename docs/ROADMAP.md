@@ -100,7 +100,7 @@ Goal: production web backends, data pipelines, and WASM-ready clients.
 - [ ] `sql` (`adapter → native/fork`) — unified SQL API, pool, `migrate`, `sql::sqlite`, `sql::postgres`
 - [x] `kv` (`native` / `adapter`) — embedded KV store + `kv::redis`
 - [x] `cache` (`native`) — in-memory LRU/TTL cache
-- [ ] `task` & `sync` (`adapter → native`, + `wasm32` spawn) — async tasks, channels, semaphore, `schedule`
+- [ ] `task` & `sync` (`adapter → native`, + `wasm32` spawn) — async tasks, channels, semaphore, `schedule`. Phase 1 native `task` runtime + `akku::io` async traits + `akku::net` TCP (epoll/kqueue/WSAPoll) shipped in PR #19.
 - [ ] `net`, `dns`, `quic` (`native` / `adapter`) — flat modules: `net` (`std::net` superset: IP, TCP/UDP/Unix sockets, async), `dns`, `quic`
 - [ ] `xdr`, `vfs`, `nfs` (megaghost-driven) — `xdr` (XDR, RFC 4506; shipped in PR #18), `vfs` (virtual filesystem trait layer), `nfs` (`server`/`client` over `vfs`; ONC-RPC internal; read-only `server` first)
 
