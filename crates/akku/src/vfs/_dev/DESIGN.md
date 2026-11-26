@@ -1,6 +1,6 @@
 # vfs — design record
 
-Status: **G1 proposal** (2026-11-26). §Purpose, §Non-goals, §Namespace, §Equivalents, §Dependencies, and §Key design questions are the G1 deliverable. §References and §API sketch front-load G2 research, the way `xdr` did. They are **non-binding** until the human answers the questions below and approves the API at G2.
+Status: **G2 API** (2026-11-26). §Purpose, §Non-goals, §Namespace, §Equivalents, §Dependencies, and §Key design questions are the G1 deliverable (merged in PR #22). §References was front-loaded at G1. §Decisions (G2) records the final answers to Q1–Q13, and §G2: API is the binding public API, contracts, seams, and G3 test plan. Where the G1 text (§Key design questions, §API sketch) disagrees with §Decisions (G2) or §G2: API, the G2 sections win.
 
 ## Purpose
 
@@ -224,7 +224,7 @@ A `vfs::Limits` struct follows the `xdr::Limits` / `task::Limits` pattern (const
 ### Q9. Wave, MSRV, and feature gating
 
 - **Wave 2**, alongside `xdr`, `net`, `nfs` (`xdr` Decisions §8).
-- **MSRV 1.85 / edition 2021** (`Cargo.toml:12-13`) is enough. RPITIT has been stable since 1.75. The `io::ErrorKind` variants used in Q6 are stable by 1.83 or 1.85. Return-type notation is unstable, so `Send` is fixed (Q1 a). `InvalidFilename` and `FilesystemLoop` are unstable and are not used.
+- **MSRV 1.85 / edition 2021** (workspace root `Cargo.toml:12-13`, `[workspace.package]` `edition` / `rust-version`) is enough. RPITIT has been stable since 1.75. The `io::ErrorKind` variants used in Q6 are stable by 1.83 or 1.85. Return-type notation is unstable, so `Send` is fixed (Q1 a). `InvalidFilename` and `FilesystemLoop` are unstable and are not used.
 - **Feature gate:** none. Zero-dep and pure computation, like `xdr`. `meta.toml`: `status = "native"`, `wasm32 = true`, `wave = 2`.
 
 **Recommendation:** as stated. No new Cargo feature.
@@ -340,7 +340,7 @@ Pinned to the commits read on 2026-11-26.
 
 ## API sketch (G2 input, non-binding)
 
-This sketch combines the recommendations of Q1–Q12. It contains signatures only. Exact lifetimes, blanket impls, and docs are settled at G2.
+This sketch combines the recommendations of Q1–Q12. It contains signatures only. Exact lifetimes, blanket impls, and docs are settled at G2. **Superseded by §G2: API** (kept for the record of what G1 proposed).
 
 ```rust
 pub type Result<T> = std::result::Result<T, Error>;
@@ -401,3 +401,699 @@ pub struct MemFs { /* RwLock<tree>, monotonic ids, Limits */ }  // impl Filesyst
 ```
 
 **Seams (preliminary, for G3 test planning).** Name validation (`Name::new` adversarial bytes: empty, `/`, NUL, `.`, `..`, over-length, non-UTF-8). `NodeId` zero and unknown ids (`Stale`/`NotFound`). Lookup on a non-directory (`NotADirectory`). `read` at and past EOF and with an empty buffer. `read` on a directory (`IsADirectory`). `read_dir` cookie resume, stale verifier (`BadCookie`), `max_entries` 0 and 1, very large directories. `resolve` depth and length limits. The `parent` of the root. `DynFilesystem` round trip equivalence. Future drop at every await point (cancellation safety). `Send`/`Sync` static assertions. `MemFs` `max_nodes`/`max_bytes` exhaustion. Ids never reused after remove + re-create (9P rule).
+
+## Decisions (G2)
+
+Approved by **Orcha + independent Opus review, 2026-11-26**. The human delegated G1/G2 approval for this module to that pair. All G1 recommendations (Q1–Q13) are accepted, with the changes in the table. The trait skeleton in §G2: API was compiled with `rustc 1.85.1 --edition 2021 -D warnings` and with stable `clippy-driver -D warnings` before this record was written (scratch file outside the repo).
+
+| Q | Final decision |
+|---|---|
+| Q1 async spelling | **(D).** Static `Filesystem: Send + Sync` (no `'static` supertrait) with RPITIT methods returning `impl Future<Output = …> + Send`. Dyn twin `DynFilesystem: Send + Sync` whose methods are suffixed `_dyn` (so having both traits in scope never causes `E0034`) and return `BoxFuture<'a, T>`. Blanket `impl<F: Filesystem> DynFilesystem for F` (`Box::pin`). `impl<'d> Filesystem for dyn DynFilesystem + 'd` forwards with `async fn … { self.op_dyn(..).await }` (returning the box directly gives `E0700`). Forwarding impls for `Arc<F>`, `Box<F>`, `&F` with `F: Filesystem + ?Sized`. Alias `BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>`. Spawning code adds `'static` itself (`Arc<F>` with `F: 'static`). |
+| Q2 identity | **(B)** with changes. `NodeId(NonZeroU64)` + `Attr::generation`. `persistent_ids: bool` is replaced by `FsInfo::id_epoch: u64`: ids and generations are meaningful only while `id_epoch` is unchanged. `MemFs` draws a fresh epoch per instance; persistent backends return a constant. **Stale rule:** an unknown or removed id yields `ErrorKind::Stale` on every id-taking operation, never `NotFound`. NFS handle layout budget (for `nfs::server`, not `vfs`): version 1 + fsid 8 + epoch 8 + id 8 + generation 8 (+ MAC 16) = 49 ≤ 64 bytes. |
+| Q3 read/write split | **(B)** agreed. v1 ships only `Filesystem`. The write verifier and `max_write` belong to the future `FilesystemWrite` / `FsInfo` extension (the structs are `#[non_exhaustive]`, so fields can be added). |
+| Q4 attributes | **(C)** with changes. `NodeKind` is `#[non_exhaustive]` with `File`, `Dir`, `Symlink`; `Other` is dropped (future kinds arrive with MKNOD support). Contract: `change`, `mtime`, `ctime`, and `size` reflect remote changes as soon as the backend knows them. |
+| Q5 directory paging | **(C)** with a `Cookie(u64)` newtype. `Cookie::START = 0`; `1` and `2` are reserved for server-synthesized `.` and `..`; backends emit cookies ≥ `Cookie::FIRST` (3). A cookie resumes at the entry after it and survives unrelated inserts and deletes. `START` (any verifier, including 0) is always accepted. Entry names are valid `Name`s and unique per directory; backends mangle duplicate remote names (MEGA allows duplicates). `MemFs`: per-directory monotonic insertion-sequence cookies, verifier 0. No `.`/`..` from backends. |
+| Q6 errors | **(C)** agreed, plus the Stale rule (Q2). `Error { kind, message: Cow<'static, str>, source }`. Documented `From<io::Error>` mapping: `TimedOut`, `ResourceBusy`, `WouldBlock`, `Interrupted` → `TryAgain`; the G1 `TimedOut` kind is dropped (it mapped to `JUKEBOX` like `TryAgain`). `resolve` follows no symlinks, so no loop kind is needed. |
+| Q7 limits | Agreed with changes. **Clamp sizes** (a read larger than the limit is a legal short read with `eof = false`; `max_entries` is clamped), **error on names, paths, symlink targets, and group lists**. New `max_groups = 16` (AUTH_SYS). `max_nodes` / `max_bytes` move out of `Limits` into `MemFs::with_limits`. `max_write_len` is not in v1 (`Limits` is `#[non_exhaustive]`, it lands with writes). Effective server read size = `min(FsInfo::max_read, Limits::max_read_len)`. |
+| Q8 backends | **(B) + public `vfs::testing` conformance kit** (`check`, `check_cancellation`; the latter polls with `std::task::Waker::noop`, stable since 1.85). `LocalFs` deferred. |
+| Q9 wave / MSRV | Wave 2, MSRV 1.85, no feature gate. The pin is the workspace root `Cargo.toml:12-13`. Because smd defaults to stable (1.100), **G3 and G4 must additionally run `smd cargo +1.85 check -p akku --all-targets`.** |
+| Q10 caller | **(B)**: `Caller::new(uid, gid)` + `Caller::with_groups(&[u32], &Limits)`; fields are private (the group bound is structural). |
+| Q11 names | **(D)** + `Name::as_bytes()`. Unicode normalization and case folding are the backend's job. |
+| Q12 read buffer | **(B)** with the contract: `len ≤ buf.len()`; short reads are legal; `offset ≥ size` → `(0, eof = true)`; bytes of `buf` past `len` are unspecified; a dropped read future may leave `buf` partially written. |
+| Q13 caching | Agreed: no caching in the core. |
+
+Also adopted from the review: `#[non_exhaustive]` plus constructors on `Entry`, `DirPage`, `ReadResult`, `FsStat`, `FsInfo`, `Attr`; required methods `info`, `root`, `getattr`, `lookup`, `parent`, `read`, `read_dir`; default methods `access` (mode bits), `read_link` (`InvalidInput`), `statfs` (unknown); the global contracts in §G2: API › Contracts; the megaghost notes in §G2: API › Notes for consumers.
+
+G2 Worker choices not named by the review (Checker: please confirm or push back):
+- `parent` returns `Attr` (not `NodeId`): NFS `LOOKUP ".."` needs the object attributes, and a remote backend saves a round trip.
+- `read_dir_all` is **not** in v1 (unbounded result size needs its own limit design); it moves to the path convenience layer in `_dev/TODO.md`. The testing kit pages internally.
+- `Access::from_mode` is public so a backend overriding `access` can reuse the POSIX evaluation.
+- Default `read_link` / `statfs` call `getattr` first, so the Stale rule holds even for backends that do not override them.
+
+## G2: API
+
+Everything below lives in `akku::vfs` (`crates/akku/src/vfs/`). Planned files: `mod.rs` (module rustdoc + re-exports), `error.rs`, `types.rs` (ids, attrs, names, cursors), `fs.rs` (traits, forwarding impls, `resolve`), `memfs.rs`, `testing.rs` (public submodule `vfs::testing`), `tests.rs`, `meta.toml` (`status = "native"`, `wasm32 = true`, `wave = 2`). No `unsafe`, no `sys/`, zero dependencies.
+
+### Item list
+
+| Item | Kind | Purpose |
+|---|---|---|
+| `Filesystem` | trait | Static async read-side backend trait |
+| `DynFilesystem` | trait | Dyn-compatible twin (`*_dyn`, boxed futures) |
+| `BoxFuture<'a, T>` | type alias | `Pin<Box<dyn Future<Output = T> + Send + 'a>>` |
+| `Result<T>` | type alias | `std::result::Result<T, vfs::Error>` |
+| `Error`, `ErrorKind` | struct, enum | Neutral error model |
+| `Limits` | struct | DoS limits (`with_*` builder) |
+| `NodeId`, `NodeKind`, `Attr` | struct, enum, struct | Node identity and attributes |
+| `FsInfo`, `FsStat` | structs | Static filesystem info; space/file counters |
+| `Name<'a>` | struct | Validated borrowed entry name |
+| `Caller`, `Access` | structs | Per-call identity; ACCESS bit mask |
+| `Cookie`, `DirCursor`, `Entry`, `DirPage` | structs | Cookie-paged directory listing |
+| `ReadResult` | struct | Outcome of `read` |
+| `resolve` | async fn | Path → `Attr` walk from the root |
+| `MemFs` | struct | In-memory backend for tests and fixtures |
+| `testing::{check, check_cancellation, Report, Violation}` | module | Conformance kit for any backend |
+
+### Contracts (apply to every `Filesystem` implementation)
+
+1. **Shared, concurrent access.** Every method takes `&self`. Backends are `Send + Sync` and use interior mutability; any number of calls may run concurrently from any threads. Results must be as if each call happened atomically at some point between its start and completion.
+2. **Never block the thread.** A backend never performs blocking I/O or waits on a lock held across an `.await` inside a method; it waits only by returning `Poll::Pending`. Short critical sections (a `RwLock` around an in-memory tree) are fine.
+3. **Cancellation safety.** A server drops a future when the client disconnects. Dropping any returned future after any number of polls (including zero) leaves the filesystem consistent: later calls behave as if the dropped call never happened or completed. `read` may leave its `buf` partially written.
+4. **Stale rule.** An id the backend does not know (never issued, removed, or from another `id_epoch`) yields `ErrorKind::Stale` from every operation that takes it: `getattr`, `lookup` (as `dir`), `parent`, `access`, `read`, `read_dir` (as `dir`), `read_link`, `statfs`. `NotFound` is reserved for "this name is absent from this existing directory" (`lookup`, `resolve`).
+5. **Identity.** For a fixed `id_epoch`, `root()` is constant, a `NodeId` names one node for that node's lifetime, and the pair `(id, generation)` never names a different object. A backend that never reuses ids keeps `generation` at 0.
+6. **Bounded outputs.** Backends never return more than asked: `ReadResult::len ≤ buf.len()`, `DirPage::entries.len() ≤ max(1, max_entries)`, `read_link` ≤ the backend's `max_symlink_len`.
+7. **Progress.** `read` with a non-empty `buf` returning `eof = false` has `len ≥ 1`. `read_dir` with `eof = false` returns at least one entry. (Otherwise a server loops forever.)
+8. **No panics.** No input (any `NodeId`, any `offset` up to `u64::MAX`, any cookie or verifier, any `max_entries` up to `usize::MAX`) makes a backend panic or overflow; offset arithmetic is checked or saturating.
+9. **Freshness.** `Attr::{size, mtime, ctime, change}` reflect remote changes as soon as the backend knows them. `change` strictly increases whenever data or attributes of the node change (a directory changes when an entry is added, removed, or renamed).
+10. **No symlink following.** No operation follows symlinks: `lookup` and `resolve` return the symlink's own `Attr`; `lookup` *through* a symlink is `NotADirectory`.
+11. **Caller.** Backends may ignore `Caller`. A backend that enforces permissions returns `PermissionDenied` (or `NotPermitted` for owner-only operations).
+
+### Errors
+
+```rust
+/// A `vfs` error: a kind, an optional static-or-owned message, and an optional source.
+#[derive(Debug)]
+pub struct Error { /* kind: ErrorKind, message: Cow<'static, str>, source: Option<Box<dyn std::error::Error + Send + Sync>> */ }
+
+impl Error {
+    /// Builds an error. `message` may be empty; `&'static str` does not allocate.
+    pub fn new(kind: ErrorKind, message: impl Into<Cow<'static, str>>) -> Self;
+    /// Attaches a source error (kept by `std::error::Error::source`).
+    pub fn with_source(self, source: impl Into<Box<dyn std::error::Error + Send + Sync + 'static>>) -> Self;
+    /// The kind servers map to wire status codes.
+    pub fn kind(&self) -> ErrorKind;
+    /// The message, possibly empty.
+    pub fn message(&self) -> &str;
+}
+impl From<ErrorKind> for Error;          // empty message
+impl fmt::Display for Error;             // "<kind>" if the message is empty, else "<kind>: <message>"
+impl std::error::Error for Error;        // source() returns the attached source
+impl From<Error> for std::io::Error;     // io::Error::new(mapped kind, the vfs::Error)
+impl From<std::io::Error> for Error;     // see mapping; recovers a wrapped vfs::Error exactly
+
+/// Error categories. `#[non_exhaustive]`: servers map unknown future kinds to their generic I/O error.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ErrorKind { NotFound, NotPermitted, PermissionDenied, AlreadyExists, NotADirectory,
+    IsADirectory, DirectoryNotEmpty, InvalidInput, InvalidName, NameTooLong, ReadOnly, NoSpace,
+    QuotaExceeded, FileTooLarge, CrossesDevices, TooManyLinks, Stale, BadCookie, Unsupported,
+    TryAgain, Io }
+impl ErrorKind { pub const fn as_str(self) -> &'static str; }   // lower-case description, e.g. "stale node id"
+impl fmt::Display for ErrorKind;
+```
+
+`Error: Send + Sync + 'static` and `!Clone` (the source is a boxed trait object).
+
+| `ErrorKind` | Meaning | NFSv3 (`nfs::server`) | `vfs` → `io::ErrorKind` | `io::ErrorKind` → `vfs` |
+|---|---|---|---|---|
+| `NotFound` | name absent in an existing dir | `NFS3ERR_NOENT` 2 | `NotFound` | `NotFound` |
+| `NotPermitted` | owner-only operation | `NFS3ERR_PERM` 1 | `PermissionDenied` | — |
+| `PermissionDenied` | access check failed | `NFS3ERR_ACCES` 13 | `PermissionDenied` | `PermissionDenied` |
+| `AlreadyExists` | name taken (MemFs build API) | `NFS3ERR_EXIST` 17 | `AlreadyExists` | `AlreadyExists` |
+| `NotADirectory` | dir op on a non-dir | `NFS3ERR_NOTDIR` 20 | `NotADirectory` | `NotADirectory` |
+| `IsADirectory` | file op on a dir | `NFS3ERR_ISDIR` 21 | `IsADirectory` | `IsADirectory` |
+| `DirectoryNotEmpty` | remove of a non-empty dir | `NFS3ERR_NOTEMPTY` 66 | `DirectoryNotEmpty` | `DirectoryNotEmpty` |
+| `InvalidInput` | bad argument (read on symlink, read_link on non-symlink, bad perm, too many groups, too deep path) | `NFS3ERR_INVAL` 22 | `InvalidInput` | `InvalidInput` |
+| `InvalidName` | empty, `.`, `..`, `/`, or NUL in a name | `NFS3ERR_ACCES` 13 (RFC 1813 §3.2) | `InvalidInput` | — |
+| `NameTooLong` | name, path, or symlink target over its limit | `NFS3ERR_NAMETOOLONG` 63 | `InvalidInput` | — |
+| `ReadOnly` | write to a read-only fs | `NFS3ERR_ROFS` 30 | `ReadOnlyFilesystem` | `ReadOnlyFilesystem` |
+| `NoSpace` | storage or node budget exhausted | `NFS3ERR_NOSPC` 28 | `StorageFull` | `StorageFull` |
+| `QuotaExceeded` | user quota | `NFS3ERR_DQUOT` 69 | `QuotaExceeded` | `QuotaExceeded` |
+| `FileTooLarge` | size or offset + len over the max file size | `NFS3ERR_FBIG` 27 | `FileTooLarge` | `FileTooLarge` |
+| `CrossesDevices` | cross-fs link/rename | `NFS3ERR_XDEV` 18 | `CrossesDevices` | `CrossesDevices` |
+| `TooManyLinks` | link count limit | `NFS3ERR_MLINK` 31 | `TooManyLinks` | `TooManyLinks` |
+| `Stale` | unknown/removed/foreign-epoch id | `NFS3ERR_STALE` 70 | `StaleNetworkFileHandle` | `StaleNetworkFileHandle` |
+| `BadCookie` | cookie invalid for the verifier | `NFS3ERR_BAD_COOKIE` 10003 | `InvalidInput` | — |
+| `Unsupported` | operation not provided | `NFS3ERR_NOTSUPP` 10004 | `Unsupported` | `Unsupported` |
+| `TryAgain` | temporarily unavailable (uncached MEGA chunk, rate limit, timeout) | `NFS3ERR_JUKEBOX` 10008 | `ResourceBusy` | `ResourceBusy`, `TimedOut`, `WouldBlock`, `Interrupted` |
+| `Io` | anything else | `NFS3ERR_IO` 5 | `Other` | every other kind |
+
+`From<io::Error>`: if the `io::Error` wraps a `vfs::Error` (as produced by `From<vfs::Error>`), that error is returned unchanged, so `vfs → io → vfs` preserves kind, message, and source for every kind. Otherwise the kind is mapped as in the last column, the message is empty, and the `io::Error` becomes the source. All `io::ErrorKind` variants named are stable at Rust 1.85 (§References). A backend contract violation detected by a server (e.g. `len > buf.len()`) is the server's `NFS3ERR_SERVERFAULT` 10006, not a `vfs` kind.
+
+### Limits
+
+```rust
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    pub max_read_len: usize,    pub max_dir_entries: usize, pub max_name_len: usize,
+    pub max_path_len: usize,    pub max_path_depth: usize,  pub max_symlink_len: usize,
+    pub max_groups: usize,
+}
+impl Default for Limits { /* Limits::new() */ }
+impl Limits {
+    pub const fn new() -> Self;
+    pub const fn with_max_read_len(self, max: usize) -> Self;
+    pub const fn with_max_dir_entries(self, max: usize) -> Self;
+    pub const fn with_max_name_len(self, max: usize) -> Self;
+    pub const fn with_max_path_len(self, max: usize) -> Self;
+    pub const fn with_max_path_depth(self, max: usize) -> Self;
+    pub const fn with_max_symlink_len(self, max: usize) -> Self;
+    pub const fn with_max_groups(self, max: usize) -> Self;
+}
+```
+
+All bounds are inclusive (a value equal to the limit is accepted).
+
+| Field | Default | On excess | Enforced by |
+|---|---|---|---|
+| `max_read_len` | `1_048_576` (1 MiB) | **clamp**: short read, `eof = false`; `0` behaves as `1` | servers (count clamp), `MemFs::read` |
+| `max_dir_entries` | `4_096` | **clamp** `max_entries` to `1..=max`; `0` behaves as `1` | servers, `MemFs::read_dir` |
+| `max_name_len` | `255` bytes | **error** `NameTooLong` | `Name::new`, `MemFs` build API |
+| `max_path_len` | `4_096` bytes | **error** `NameTooLong` | `resolve` |
+| `max_path_depth` | `256` components | **error** `InvalidInput` | `resolve` |
+| `max_symlink_len` | `4_096` bytes | **error** `NameTooLong` | `MemFs::symlink`; servers treat a longer `read_link` result as a backend fault |
+| `max_groups` | `16` (AUTH_SYS) | **error** `InvalidInput` | `Caller::with_groups` |
+| `MemFs` `max_nodes` | `1_048_576` (`MemFs::DEFAULT_MAX_NODES`) | **error** `NoSpace` | `MemFs` build API |
+| `MemFs` `max_bytes` | `268_435_456` (256 MiB, `MemFs::DEFAULT_MAX_BYTES`) | **error** `NoSpace`, all-or-nothing | `MemFs` build API |
+
+### Identity and attributes
+
+```rust
+/// Opaque, non-zero node id. Stable for the node's lifetime within one `FsInfo::id_epoch`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct NodeId(NonZeroU64);
+impl NodeId {
+    pub const fn new(id: u64) -> Option<Self>;        // None for 0 (RFC 1813: fileid 0 is special)
+    pub const fn from_nonzero(id: NonZeroU64) -> Self;
+    pub const fn get(self) -> u64;
+}
+impl From<NonZeroU64> for NodeId;
+impl From<NodeId> for u64;
+
+/// Node type. Future kinds (fifo, socket, devices) arrive with MKNOD support.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NodeKind { File, Dir, Symlink }
+
+/// Node attributes (getattr / fattr3 superset, protocol neutral).
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Attr {
+    pub id: NodeId,
+    pub generation: u64,       // (id, generation) never names a different object
+    pub kind: NodeKind,
+    pub perm: u32,             // permission bits incl. setuid/setgid/sticky; consumers ignore bits above 0o7777
+    pub nlink: u32,
+    pub uid: u32,
+    pub gid: u32,
+    pub size: u64,             // bytes for files; target length for symlinks; backend-defined for dirs
+    pub used: u64,             // bytes of storage used
+    pub atime: SystemTime,
+    pub mtime: SystemTime,
+    pub ctime: SystemTime,
+    pub change: u64,           // strictly increasing per-node change counter (contract 9)
+}
+impl Attr {
+    /// Defaults: generation 0; perm 0o644 (File) / 0o755 (Dir) / 0o777 (Symlink);
+    /// nlink 1 (File, Symlink) / 2 (Dir); uid = gid = 0; size = used = 0;
+    /// all times `UNIX_EPOCH`; change 0. Backends set the remaining public fields.
+    pub fn new(id: NodeId, kind: NodeKind) -> Self;
+}
+
+/// Static per-filesystem information (FSINFO + PATHCONF). Constant for the backend's lifetime.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FsInfo {
+    pub fsid: u64,
+    pub id_epoch: u64,               // ids/generations valid only while this is unchanged
+    pub read_only: bool,
+    pub max_read: u32,               // preferred and maximum read size the backend serves
+    pub max_name_len: u32,
+    pub max_file_size: u64,
+    pub time_granularity: Duration,
+    pub case_insensitive: bool,
+    pub case_preserving: bool,
+    pub symlinks: bool,
+    pub hard_links: bool,
+}
+impl FsInfo {
+    /// Defaults: read_only true (v1 has no write trait); max_read 1 MiB; max_name_len 255;
+    /// max_file_size i64::MAX; time_granularity 1 ns; case_insensitive false;
+    /// case_preserving true; symlinks true; hard_links false.
+    pub const fn new(fsid: u64, id_epoch: u64) -> Self;
+}
+
+/// Space and file counters (FSSTAT).
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FsStat {
+    pub total_bytes: u64, pub free_bytes: u64, pub avail_bytes: u64,
+    pub total_files: u64, pub free_files: u64, pub avail_files: u64,
+}
+impl FsStat {
+    /// All counters 0: "no information" (what the default `statfs` returns).
+    pub const fn unknown() -> Self;
+}
+```
+
+`id_epoch` semantics: a persistent backend (megaghost: derived from account + root handle) returns the same value across restarts, so NFS handles survive a restart. `MemFs` returns a fresh random value per instance (derived from `std::collections::hash_map::RandomState`, the current time, and a process-wide counter), so handles from an earlier instance are rejected as stale. `nfs::server` compares the handle's epoch with `info().id_epoch` and answers `NFS3ERR_STALE` without calling the backend on mismatch.
+
+### Names, callers, access
+
+```rust
+/// A validated directory-entry name: 1..=max_name_len bytes, not "." or "..", no '/' or NUL.
+/// Any other bytes are allowed (non-UTF-8, '\\', spaces, control characters).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Name<'a>(&'a [u8]);
+impl<'a> Name<'a> {
+    /// Checks, in this order: empty → InvalidName; len > limits.max_name_len → NameTooLong;
+    /// "." or ".." → InvalidName; contains b'/' or 0 → InvalidName.
+    pub fn new(bytes: &'a [u8], limits: &Limits) -> Result<Self>;
+    pub const fn as_bytes(self) -> &'a [u8];
+    pub fn to_str(self) -> Option<&'a str>;      // Some iff valid UTF-8
+}
+impl fmt::Debug for Name<'_>;                    // escaped bytes, never panics on non-UTF-8
+impl AsRef<[u8]> for Name<'_>;
+
+/// Per-call identity (AUTH_SYS shape). Not `Default`: no implicit root caller.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Caller { /* private: uid, gid, groups */ }
+impl Caller {
+    pub const fn new(uid: u32, gid: u32) -> Self;   // no supplementary groups
+    /// groups.len() > limits.max_groups → InvalidInput. Replaces earlier groups.
+    pub fn with_groups(self, groups: &[u32], limits: &Limits) -> Result<Self>;
+    pub const fn uid(&self) -> u32;
+    pub const fn gid(&self) -> u32;
+    pub fn groups(&self) -> &[u32];
+}
+
+/// ACCESS bit mask. Values equal RFC 1813 ACCESS3_* (READ 0x01, LOOKUP 0x02, MODIFY 0x04,
+/// EXTEND 0x08, DELETE 0x10, EXECUTE 0x20).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Access(u32);
+impl Access {
+    pub const READ: Self; pub const LOOKUP: Self; pub const MODIFY: Self;
+    pub const EXTEND: Self; pub const DELETE: Self; pub const EXECUTE: Self;
+    pub const fn empty() -> Self;
+    pub const fn all() -> Self;                         // 0x3f
+    pub const fn bits(self) -> u32;
+    pub const fn from_bits_truncate(bits: u32) -> Self; // drops unknown bits
+    pub const fn contains(self, other: Self) -> bool;
+    pub const fn is_empty(self) -> bool;
+    pub const fn union(self, other: Self) -> Self;
+    pub const fn intersection(self, other: Self) -> Self;
+    /// POSIX mode-bit evaluation (see below). Pure; no I/O.
+    pub fn from_mode(caller: &Caller, attr: &Attr, read_only: bool) -> Self;
+}
+impl BitOr for Access; impl BitAnd for Access; impl BitOrAssign for Access;
+```
+
+`Access::from_mode` algorithm (the default `Filesystem::access` returns `want ∩ from_mode(caller, getattr(id)?, info().read_only)`):
+1. Pick the permission triple `rwx`: if `caller.uid() == 0`, `r = w = 1` and `x = 1` iff the node is a `Dir` or any of `perm & 0o111` is set; else if `caller.uid() == attr.uid`, the owner bits `(perm >> 6) & 7`; else if `caller.gid() == attr.gid` or `attr.gid ∈ caller.groups()`, the group bits `(perm >> 3) & 7`; else the other bits `perm & 7`.
+2. Map: `r` → `READ`; `w` → `MODIFY | EXTEND`, plus `DELETE` for a `Dir`; `x` → `LOOKUP` for a `Dir`, `EXECUTE` otherwise.
+3. If `read_only`, remove `MODIFY | EXTEND | DELETE`.
+
+### Directories
+
+```rust
+/// Opaque directory position. 0 = START; 1 and 2 are reserved for server-synthesized "." and "..";
+/// backends emit only cookies >= FIRST (3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+pub struct Cookie(u64);
+impl Cookie {
+    pub const START: Self;     // 0
+    pub const DOT: Self;       // 1
+    pub const DOT_DOT: Self;   // 2
+    pub const FIRST: Self;     // 3, the smallest backend cookie
+    pub const fn new(raw: u64) -> Self;
+    pub const fn get(self) -> u64;
+    pub const fn is_start(self) -> bool;   // true for 0, 1, 2 (all mean "from the first entry")
+}
+
+/// Where to resume a listing (cookie3 + cookieverf3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct DirCursor { pub cookie: Cookie, pub verifier: u64 }
+impl DirCursor {
+    pub const START: Self;                                  // cookie START, verifier 0
+    pub const fn new(cookie: Cookie, verifier: u64) -> Self;
+}
+
+/// One directory entry. `name` is always a valid `Name` (contract), unique within the directory.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Entry {
+    pub name: Vec<u8>, pub id: NodeId, pub kind: NodeKind, pub cookie: Cookie,
+    pub attr: Option<Attr>,     // Some only when requested with `with_attrs` (may still be None)
+}
+impl Entry {
+    pub fn new(name: Name<'_>, id: NodeId, kind: NodeKind, cookie: Cookie) -> Self;  // attr None
+    pub fn with_attr(self, attr: Attr) -> Self;
+}
+
+/// One page of a listing.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DirPage { pub entries: Vec<Entry>, pub eof: bool, pub verifier: u64 }
+impl DirPage { pub fn new(entries: Vec<Entry>, eof: bool, verifier: u64) -> Self; }
+```
+
+Cookie rules (all backends):
+- `read_dir` with cursor cookie `c` returns entries that follow the entry whose cookie is `c` in the directory's listing order. `Cookie::is_start()` cookies (0, 1, 2) mean "from the first entry", with **any** verifier.
+- Cookies are unique within one directory listing and never `0`, `1`, or `2`.
+- **Stability:** with verifier `0` ("cookies always valid", RFC 1813 READDIR note), a cookie stays usable after unrelated inserts and deletes, including deletion of the entry it came from. During a paged listing, every entry that exists for the whole listing is returned exactly once; entries added or removed meanwhile appear at most once. A backend that cannot promise this returns a non-zero verifier and answers `BadCookie` when a cursor's verifier no longer matches.
+- An unchanged directory lists in the same order with the same cookies.
+- `eof = true` iff no entry follows the last returned one at the time of the call (so a page that returns the last entry has `eof = true`).
+- Backends never return `.` or `..`; servers synthesize them with cookies `DOT` / `DOT_DOT`.
+
+### Reads
+
+```rust
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadResult { pub len: usize, pub eof: bool }
+impl ReadResult { pub const fn new(len: usize, eof: bool) -> Self; }
+```
+
+### `Filesystem`
+
+```rust
+pub trait Filesystem: Send + Sync {
+    /// Static filesystem information. Synchronous, cheap, constant for the backend's lifetime.
+    fn info(&self) -> FsInfo;
+
+    /// The root directory id. Constant for one `id_epoch`.
+    fn root(&self) -> NodeId;
+
+    /// Attributes of `id`; `attr.id == id`. Unknown id → Stale.
+    fn getattr(&self, caller: &Caller, id: NodeId) -> impl Future<Output = Result<Attr>> + Send;
+
+    /// Looks `name` up in directory `dir` and returns the child's attributes (symlinks not followed).
+    /// Errors: dir unknown → Stale; dir not a Dir → NotADirectory; absent → NotFound;
+    /// name longer than the backend's own max_name_len → NameTooLong.
+    /// Should answer from cached metadata when possible (negative lookups are frequent).
+    fn lookup(&self, caller: &Caller, dir: NodeId, name: Name<'_>) -> impl Future<Output = Result<Attr>> + Send;
+
+    /// Attributes of the parent of directory `dir` (NFS LOOKUP ".."). The root's parent is the root.
+    /// Errors: unknown → Stale; not a Dir → NotADirectory.
+    fn parent(&self, caller: &Caller, dir: NodeId) -> impl Future<Output = Result<Attr>> + Send;
+
+    /// Reads file bytes at `offset` into `buf` and returns how many were written to `buf[..len]`.
+    /// Contract: len <= buf.len(); short reads are legal; with a stable file,
+    /// eof == (offset + len >= size) (computed without overflow); offset >= size → (0, true);
+    /// empty buf → (0, offset >= size); non-empty buf and !eof → len >= 1; bytes of buf past
+    /// len are unspecified; a dropped future may leave buf partially written.
+    /// Errors: unknown → Stale; Dir → IsADirectory; Symlink → InvalidInput; TryAgain when the
+    /// data is temporarily unavailable.
+    fn read(&self, caller: &Caller, id: NodeId, offset: u64, buf: &mut [u8]) -> impl Future<Output = Result<ReadResult>> + Send;
+
+    /// One page of directory `dir` after `cursor` (see Cookie rules). At most max(1, max_entries)
+    /// entries (backends may clamp further). `with_attrs == false` → every `attr` is None;
+    /// `true` → `attr` should be Some, and when Some, `attr.id == id` and `attr.kind == kind`.
+    /// Errors: unknown → Stale; not a Dir → NotADirectory; invalid cursor → BadCookie.
+    fn read_dir(&self, caller: &Caller, dir: NodeId, cursor: DirCursor, max_entries: usize, with_attrs: bool)
+        -> impl Future<Output = Result<DirPage>> + Send;
+
+    /// Which of `want` the caller may do on `id`; the result is a subset of `want`.
+    /// Default: `want ∩ Access::from_mode(caller, &getattr(id)?, info().read_only)`.
+    fn access(&self, caller: &Caller, id: NodeId, want: Access) -> impl Future<Output = Result<Access>> + Send { /* default */ }
+
+    /// Target bytes of symlink `id`: non-empty, no NUL, at most the backend's max_symlink_len.
+    /// Errors: unknown → Stale; not a Symlink → InvalidInput.
+    /// Default: `getattr(id)?` then InvalidInput. Backends with symlinks must override it.
+    fn read_link(&self, caller: &Caller, id: NodeId) -> impl Future<Output = Result<Vec<u8>>> + Send { /* default */ }
+
+    /// Space and file counters for the filesystem containing `id`.
+    /// Default: `getattr(id)?` then `FsStat::unknown()`.
+    fn statfs(&self, caller: &Caller, id: NodeId) -> impl Future<Output = Result<FsStat>> + Send { /* default */ }
+}
+```
+
+Implementors may write `async fn` for every method; the compiler checks the `Send` bound on the resulting future.
+
+### `DynFilesystem` and forwarding impls
+
+```rust
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// Dyn-compatible twin of `Filesystem` (one heap allocation per async call).
+/// Implemented for every `F: Filesystem` (sized); do not implement it by hand.
+pub trait DynFilesystem: Send + Sync {
+    fn info_dyn(&self) -> FsInfo;
+    fn root_dyn(&self) -> NodeId;
+    fn getattr_dyn<'a>(&'a self, caller: &'a Caller, id: NodeId) -> BoxFuture<'a, Result<Attr>>;
+    fn lookup_dyn<'a>(&'a self, caller: &'a Caller, dir: NodeId, name: Name<'a>) -> BoxFuture<'a, Result<Attr>>;
+    fn parent_dyn<'a>(&'a self, caller: &'a Caller, dir: NodeId) -> BoxFuture<'a, Result<Attr>>;
+    fn read_dyn<'a>(&'a self, caller: &'a Caller, id: NodeId, offset: u64, buf: &'a mut [u8]) -> BoxFuture<'a, Result<ReadResult>>;
+    fn read_dir_dyn<'a>(&'a self, caller: &'a Caller, dir: NodeId, cursor: DirCursor, max_entries: usize, with_attrs: bool)
+        -> BoxFuture<'a, Result<DirPage>>;
+    fn access_dyn<'a>(&'a self, caller: &'a Caller, id: NodeId, want: Access) -> BoxFuture<'a, Result<Access>>;
+    fn read_link_dyn<'a>(&'a self, caller: &'a Caller, id: NodeId) -> BoxFuture<'a, Result<Vec<u8>>>;
+    fn statfs_dyn<'a>(&'a self, caller: &'a Caller, id: NodeId) -> BoxFuture<'a, Result<FsStat>>;
+}
+
+impl<F: Filesystem> DynFilesystem for F { /* Box::pin(Filesystem::op(self, ..)) */ }
+impl<'d> Filesystem for dyn DynFilesystem + 'd { /* async fn op(..) { self.op_dyn(..).await } */ }
+impl<F: Filesystem + ?Sized> Filesystem for Arc<F> { /* (**self).op(..) */ }
+impl<F: Filesystem + ?Sized> Filesystem for Box<F> { /* (**self).op(..) */ }
+impl<F: Filesystem + ?Sized> Filesystem for &F     { /* (**self).op(..) */ }
+```
+
+All forwarding impls forward **every** method, including `access`, `read_link`, and `statfs`, so a backend's overrides are honored through every wrapper. Consequences (all compile-checked): `Arc<dyn DynFilesystem>`, `Box<dyn DynFilesystem>`, and `&dyn DynFilesystem` implement `Filesystem`; a generic `F: Filesystem + ?Sized + 'static` behind `Arc<F>` yields `Send + 'static` futures suitable for `akku::task::spawn`; with both traits imported, `fs.getattr(..)` on `MemFs` is unambiguous.
+
+### Helpers
+
+```rust
+/// Walks a '/'-separated byte path from `fs.root()` with `lookup` and returns the final Attr.
+pub async fn resolve<F: Filesystem + ?Sized>(fs: &F, caller: &Caller, path: &[u8], limits: &Limits) -> Result<Attr>;
+```
+
+Order of checks, all before the first backend call: `path.len() > max_path_len` → `NameTooLong`; more than `max_path_depth` non-empty components → `InvalidInput`; each component through `Name::new` (so `.` / `..` / NUL → `InvalidName`, over-long → `NameTooLong`). Empty components (leading, trailing, repeated `/`) are skipped, so `b""` and `b"/"` resolve to the root (one `getattr`). Then `getattr(root)` and one `lookup` per component. Symlinks are not followed: a final symlink is returned as is, and a symlink in the middle makes the next `lookup` fail with `NotADirectory`. The future is `Send` when `F: Filesystem + ?Sized`.
+
+### `MemFs`
+
+```rust
+/// In-memory backend: a tree behind a RwLock. All futures complete on their first poll.
+pub struct MemFs { /* private */ }
+impl fmt::Debug for MemFs;        // node count and bytes used only, never the tree
+impl Default for MemFs;           // MemFs::new()
+impl Filesystem for MemFs;        // read-only view; default access, own read_link and statfs
+impl MemFs {
+    pub const DEFAULT_MAX_NODES: usize = 1_048_576;
+    pub const DEFAULT_MAX_BYTES: usize = 268_435_456;
+    pub fn new() -> Self;                                                  // Limits::new() + defaults
+    pub fn with_limits(limits: Limits, max_nodes: usize, max_bytes: usize) -> Self;
+    pub fn limits(&self) -> Limits;
+    pub fn create_file(&self, dir: NodeId, name: &[u8], data: &[u8]) -> Result<NodeId>;
+    pub fn mkdir(&self, dir: NodeId, name: &[u8]) -> Result<NodeId>;
+    pub fn symlink(&self, dir: NodeId, name: &[u8], target: &[u8]) -> Result<NodeId>;
+    pub fn write_all(&self, id: NodeId, offset: u64, data: &[u8]) -> Result<()>;
+    pub fn set_len(&self, id: NodeId, len: u64) -> Result<()>;
+    pub fn remove(&self, dir: NodeId, name: &[u8]) -> Result<()>;
+    pub fn set_perm(&self, id: NodeId, perm: u32) -> Result<()>;
+    pub fn set_owner(&self, id: NodeId, uid: u32, gid: u32) -> Result<()>;
+    pub fn set_times(&self, id: NodeId, atime: SystemTime, mtime: SystemTime) -> Result<()>;
+    pub fn node_count(&self) -> usize;      // including the root
+    pub fn bytes_used(&self) -> usize;      // see accounting
+}
+```
+
+Semantics:
+- **Identity.** Root is `NodeId 1`. New nodes get strictly increasing ids from 2; ids are **never reused** (id overflow → `NoSpace`). `generation` is always 0. `info()`: `fsid` 0, fresh `id_epoch`, `read_only` true, `max_read = min(limits.max_read_len, u32::MAX)` (0 → 1), `max_name_len = min(limits.max_name_len, u32::MAX)`, `max_file_size = i64::MAX`, `time_granularity` 1 ns, case-sensitive and case-preserving, `symlinks` true, `hard_links` false.
+- **Attributes.** Kind defaults from `Attr::new` (perm 0o644 / 0o755 / 0o777, uid = gid = 0). Files: `size = used = data length`, `nlink` 1. Symlinks: `size = used = target length`, `nlink` 1. Dirs: `size = used = entry count`, `nlink = 2 + child directories`. A new node has `change = 1` and `atime = mtime = ctime = SystemTime::now()`. Every mutation of a node increments its `change` by exactly 1 and sets `ctime = now` (data changes also set `mtime`); inserting or removing an entry does the same to the directory (and sets its `mtime`). Reads never change attributes (no atime updates).
+- **Build API.** Names go through `Name::new(name, &self.limits())`. Errors in this order: unknown `dir`/`id` → `Stale`; wrong kind (`dir` not a Dir → `NotADirectory`; `write_all`/`set_len` on a Dir → `IsADirectory`, on a Symlink → `InvalidInput`); invalid name → `InvalidName` / `NameTooLong`; name exists → `AlreadyExists`; symlink target empty or containing NUL → `InvalidInput`, longer than `max_symlink_len` → `NameTooLong`; `set_perm` with bits above `0o7777` → `InvalidInput`; `offset + data.len()` overflowing `u64`, or a resulting size above `i64::MAX` → `FileTooLarge`; node or byte budget → `NoSpace`. Every operation is **all-or-nothing**: on error nothing changes (no partial write, no allocation for a rejected sparse write). `write_all` past the end zero-fills the gap; `set_len` truncates or zero-extends.
+- **`remove(dir, name)`.** Removes a file, a symlink, or an **empty** directory (`DirectoryNotEmpty` otherwise; `NotFound` if absent). The removed id is `Stale` on every operation afterwards, and its bytes and node slot return to the budget.
+- **Accounting.** `bytes_used = Σ entry-name lengths + Σ file data lengths + Σ symlink target lengths`. A build call fails with `NoSpace` if it would make `bytes_used > max_bytes` or `node_count > max_nodes`.
+- **`Filesystem` impl.** `read` clamps `buf` to `max(1, limits.max_read_len)` (short read, `eof` exact). `read_dir` clamps `max_entries` to `1..=max(1, limits.max_dir_entries)`, lists in **insertion order**, uses the entry's per-directory insertion sequence number (starting at `Cookie::FIRST`, strictly increasing, never reused in that directory) as its cookie, ignores verifiers, and always returns verifier 0. Resuming at cookie `c` returns entries with sequence `> c`, so any `u64` cookie is accepted (never `BadCookie`), and an entry inserted during a listing appears exactly once, at the end. `read_link` returns the stored target. `statfs` returns `total_bytes = max_bytes`, `free_bytes = avail_bytes = max_bytes − bytes_used`, `total_files = max_nodes`, `free_files = avail_files = max_nodes − node_count`. `lookup` with a name longer than the instance's `max_name_len` → `NameTooLong`. `Caller` is used only by the default `access`.
+- **Concurrency.** One `RwLock` around the tree; it is never held across an `.await` (there are none). Lock poisoning is ignored (`PoisonError::into_inner`): mutations validate everything before changing state and do not panic inside critical sections.
+
+### `vfs::testing` conformance kit
+
+```rust
+pub mod testing {
+    /// One broken rule. `rule` is a stable id from the table below.
+    #[non_exhaustive]
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct Violation { pub rule: &'static str, pub detail: String }
+
+    #[derive(Debug, Clone, Default, PartialEq, Eq)]
+    pub struct Report { /* private: violations, nodes */ }
+    impl Report {
+        pub fn is_ok(&self) -> bool;
+        pub fn violations(&self) -> &[Violation];
+        pub fn nodes(&self) -> usize;                 // nodes visited
+        #[track_caller] pub fn assert_ok(&self);      // panics "vfs::testing: <Display>" if not ok
+    }
+    impl fmt::Display for Report;                     // "<n> violation(s) in <m> node(s)" + one line per violation
+
+    /// Walks the tree from the root (breadth first, at most `max_nodes` nodes) and checks every rule.
+    pub async fn check<F: Filesystem + ?Sized>(fs: &F, caller: &Caller, limits: &Limits, max_nodes: usize) -> Report;
+
+    /// For every operation on every visited node: drop the future unpolled, and poll it exactly
+    /// once with `Context::from_waker(Waker::noop())` then drop it; afterwards the same operation
+    /// run to completion must equal the baseline; finally runs `check`.
+    pub async fn check_cancellation<F: Filesystem + ?Sized>(fs: &F, caller: &Caller, limits: &Limits, max_nodes: usize) -> Report;
+}
+```
+
+Preconditions (documented in rustdoc): the tree is not modified during the run; `caller` may read every node; `limits` are the server-side limits the backend must respect. The kit itself never panics on a misbehaving backend (e.g. it never slices `buf[..len]` with `len > buf.len()`), every loop is bounded (by `max_nodes`, page counts, and a repeated-cookie guard), and any unexpected `Err` is reported as a violation of the rule being checked. Files with `size ≤ limits.max_read_len` are read fully; larger files are probed at offsets `0`, `size − 1`, `size`, and `u64::MAX` only (bounded network cost for MEGA).
+
+| Rule | `check` verifies |
+|---|---|
+| K01 | `info()` returns equal values on repeated calls; `max_read ≥ 1`; `max_name_len ≥ 1`. `root()` is stable. |
+| K02 | `getattr(root)` succeeds, `kind == Dir`, `id == root`. |
+| K03 | `parent(root)` returns the root's id. |
+| K04 | For each node: `getattr(id).id == id`; two `getattr` calls agree on `id`, `generation`, `kind`, `size`, `change`. |
+| K05 | `perm ≤ 0o7777`. |
+| K06 | `read_dir` pages: `entries.len() ≤ max(1, max_entries)`; a non-`eof` page is non-empty; paging terminates. |
+| K07 | Entry names pass `Name::new(name, limits)` and are unique per directory; no `.` / `..`. |
+| K08 | Cookies are unique per directory and never 0, 1, or 2. |
+| K09 | Listing with page size 1 and with `limits.max_dir_entries` gives the same `(name, id, kind, cookie)` sequence; resuming from each emitted cookie (with the returned verifier) yields exactly the suffix; `eof` is set on the page with the last entry. |
+| K10 | `START` with a random verifier, `Cookie::DOT`, and `Cookie::DOT_DOT` each list from the first entry. |
+| K11 | `with_attrs = false` → every `attr` is `None`; `true` → each `Some(attr)` has matching `id` and `kind` and equals `getattr` on `id`, `kind`, `size`, `generation`. |
+| K12 | `lookup(dir, entry.name)` returns `entry.id` and `entry.kind`. |
+| K13 | For each child directory: `parent(child).id == dir`. |
+| K14 | `lookup(dir, <name absent from the listing>)` → `NotFound`. |
+| K15 | On a non-directory: `lookup` / `read_dir` / `parent` → `NotADirectory`. |
+| K16 | On a directory: `read` → `IsADirectory`. |
+| K17 | Files: `len ≤ buf.len()`; progress (non-empty buf and `!eof` → `len ≥ 1`); `eof` exact; `offset == size` and `offset == u64::MAX` and `offset = u64::MAX − 3` with a 16-byte buffer → `(0, true)`; empty buffer → `(0, offset ≥ size)`; two reads of the same range return equal bytes; a full read of a small file returns exactly `size` bytes; a buffer larger than `info().max_read` never yields `len > buf.len()`. |
+| K18 | Symlinks: `read_link` is non-empty, has no NUL, is ≤ `limits.max_symlink_len`; `read` → `InvalidInput`. Non-symlinks: `read_link` → `InvalidInput`. |
+| K19 | `access(id, want)` ⊆ `want` for `want ∈ {empty, each single bit, all}`; `access(id, empty)` is empty. |
+| K20 | `statfs(root)` succeeds. |
+| K21 | **Stale probe**: for the first id in `u64::MAX, u64::MAX − 1, …` not seen during the walk, every id-taking operation (`getattr`, `lookup` as dir, `parent`, `access`, `read`, `read_dir`, `read_link`, `statfs`) returns `Stale`. |
+| K22 | The walk visits at most `max_nodes` nodes (`Report::nodes() ≤ max_nodes`). |
+| KC1 | (`check_cancellation`) Dropping each operation's future unpolled changes nothing observable. |
+| KC2 | (`check_cancellation`) Polling each operation's future once with a no-op waker and dropping it changes nothing observable: the completed operation equals the baseline (`getattr` fields as in K04, `read` bytes, `read_dir` sequence, `read_link` bytes), and `check` afterwards reports no new violations. |
+
+### API rationale
+
+- **Static trait + `_dyn` twin** (Q1): zero-cost generic servers, `async fn` for backend authors, and runtime composition with one box per call (`opendal` `Service`/`ServiceDyn`, §References). The `_dyn` suffix exists because the blanket impl makes every backend implement both traits, and identical method names would be ambiguous (`E0034`) when both are imported (the same hazard `akku::io` documents for sync/async traits). No `'static` supertrait: borrowed backends (`&dyn DynFilesystem`, test fixtures on the stack) work, and spawning code states `'static` where it needs it.
+- **`id_epoch` instead of `persistent_ids`** (Q2): a boolean cannot tell a server *which* instance issued a handle; an epoch lets `nfs::server` reject handles from a previous `MemFs` or a re-created MEGA session without a backend call, and keeps NFS handles valid across megaghost restarts (the `nfsserve` start-time handle problem, §References).
+- **Stale, not NotFound, for ids** (Q2/Q6): RFC 1813 `nfs_fh3` says a handle to a gone object is `NFS3ERR_STALE`, which makes clients drop cached handles; `NOENT` would make the macOS client think a name lookup failed.
+- **`Cookie` newtype with reserved 1/2** (Q5): servers can synthesize `.` / `..` without colliding with backend cookies, and a typed cookie cannot be confused with a `NodeId` (the `nfsserve` `start_after: fileid` bug class). Insertion-sequence cookies in `MemFs` give the strongest stability guarantee cheaply, which the macOS client relies on (`nfsserve` disabled `BAD_COOKIE` for it, §References).
+- **Clamp vs error** (Q7): sizes are negotiable per protocol (NFS FSINFO `rtmax`: requests above max give short reads, §References), so clamping is correct and keeps clients working; names, paths, and lists are identities, and silently truncating them would address a different object.
+- **Private `Caller` fields** (Q10): `max_groups` is then enforced at construction, and fields (deadline, auth flavor) can be added without breaking anyone.
+- **Defaults call `getattr` first**: keeps contract 4 (Stale rule) true for every backend, at the cost of one metadata lookup on an error path.
+- **`parent` returns `Attr`**: NFS `LOOKUP ".."` must return post-op attributes; returning only an id would force a second remote call in megaghost.
+- **No `read_dir_all` in v1**: its result size is unbounded by any existing limit; designing a total-entries limit is deferred with the path layer.
+
+### Seams
+
+| Seam | Catches | Misses |
+|---|---|---|
+| `Name::new` | traversal (`/`, `.`, `..`), NUL, empty, length bound and check order | backend-specific charset rules |
+| `Caller::with_groups`, `Limits` builders | group bound, default values | — |
+| `Error` / `ErrorKind` + `io::Error` conversions | mapping table, exact round trip, Display, source chain | NFS mapping (lives in `nfs::server`) |
+| `Access::from_mode` | POSIX class selection, root rule, dir vs file bit mapping, read-only masking | ACL backends |
+| `Filesystem` on `MemFs` (`getattr`, `lookup`, `parent`, `read`, `read_dir`, `access`, `read_link`, `statfs`) | every contract in §Contracts on a reference backend | remote latency behaviour |
+| `MemFs` build API | budgets, all-or-nothing, id non-reuse, Stale after remove, attribute bookkeeping | — |
+| `resolve` | path limits, validation before I/O, no symlink following | path layers above it |
+| `DynFilesystem` + forwarding impls | parity of dyn / `Arc` / `Box` / `&` with static calls, override forwarding, `Send` futures, no `E0034` | — |
+| `testing::check`, `check_cancellation` | that the kit passes on `MemFs` **and** flags each rule on deliberately broken backends | rules outside the kit (performance) |
+
+### G3 test plan
+
+All tests live in `crates/akku/src/vfs/tests.rs` (public API only), drive futures with `akku::task::block_on`, and use these test-local helpers: `fixture()` → `MemFs` with `/a.txt` (`b"hello"`), `/dir/`, `/dir/b.bin` (1000 bytes of a known pattern), `/link` → `b"a.txt"`; `CountingFs<F>` (counts calls per operation, delegates); `PendingOnce<F>` (each operation awaits `akku::task::yield_now()` once before delegating, so a drop happens at a real await point); `Overriding` (overrides `access` to return `empty()` and `statfs` to fixed numbers); and one `Broken*` wrapper per kit rule. Gate commands for G3/G4: `smd cargo test -p akku --test vfs`, `smd cargo clippy -p akku --all-targets -- -D warnings`, **`smd cargo +1.85 check -p akku --all-targets`**.
+
+**Types and static assertions**
+1. `MemFs`, `Error`, `Caller`, `Limits`, `Attr`, `DirPage`, `Entry`, `Report`, `dyn DynFilesystem` are `Send + Sync`; `Error: std::error::Error + 'static`.
+2. A generic `fn spawnable<F: Filesystem + ?Sized + 'static>(Arc<F>) -> impl Future + Send + 'static` calling every operation compiles for `MemFs`, `dyn DynFilesystem`, `Arc<dyn DynFilesystem>`, `Box<dyn DynFilesystem>`; the future runs under `akku::task::spawn`.
+3. `resolve(&dyn DynFilesystem, ..)` and every `Filesystem` method on `&MemFs` return `Send` futures.
+4. With `use akku::vfs::{Filesystem, DynFilesystem};` in scope, `fs.getattr(..)`, `fs.info()`, `fs.root()` on `MemFs` compile (no `E0034`).
+5. `NodeId::new(0)` is `None`; `NodeId::new(1).unwrap().get() == 1`; `NodeId::new(u64::MAX)` round-trips; `From<NonZeroU64>` / `Into<u64>` agree.
+6. `Cookie::{START, DOT, DOT_DOT, FIRST}` are 0/1/2/3; `is_start` is true exactly for 0, 1, 2; `DirCursor::START == DirCursor::default()`.
+7. `Access` constants equal RFC 1813 values `0x01, 0x02, 0x04, 0x08, 0x10, 0x20`; `from_bits_truncate(u32::MAX) == all()`; `all().bits() == 0x3f`; `BitOr` / `BitAnd` / `contains` behave on disjoint and overlapping sets.
+8. `Limits::new() == Limits::default()` and equals the defaults table field by field; each `with_*` changes only its field.
+9. `Attr::new` defaults per kind (perm 0o644 / 0o755 / 0o777, nlink 1 / 2 / 1, times `UNIX_EPOCH`, change 0); `FsInfo::new` defaults; `FsStat::unknown()` all zero; `Entry::new(..).attr.is_none()`; `with_attr` sets it.
+
+**Name validation**
+10. Rejected with `InvalidName`: `b""`, `b"."`, `b".."`, `b"/"`, `b"a/b"`, `b"/a"`, `b"a/"`, `b"\0"`, `b"a\0b"`.
+11. Accepted: `b"..."`, `b".a"`, `b"a."`, `b" "`, `b"a\\b"`, `[0xff, 0xfe]` (`to_str() == None`), `"ü€𝄞"` (`to_str() == Some`), `b"\x01\x7f"`.
+12. Length: 255 bytes accepted; 256 bytes → `NameTooLong`; 256 bytes containing `/` → `NameTooLong` (length checked before content); `with_max_name_len(0)`: `b"a"` → `NameTooLong`, `b""` → `InvalidName`; `with_max_name_len(usize::MAX)` accepts a 64 KiB name.
+13. `as_bytes` returns the input slice; `Debug` of a non-UTF-8 name does not panic and shows escapes.
+
+**Caller and access**
+14. `Caller::new(5, 7)` getters; `with_groups` with 16 groups OK, 17 → `InvalidInput`; with `with_max_groups(0)` an empty slice is OK and one group → `InvalidInput`; a second `with_groups` replaces the first.
+15. `Access::from_mode` table: owner / group (primary gid) / group (supplementary) / other / uid 0 for perm `0o750` on File and Dir, with expected sets written out by hand (e.g. owner on Dir `0o750` → `READ|LOOKUP|MODIFY|EXTEND|DELETE`; other → empty; root on File `0o640` → `READ|MODIFY|EXTEND` without `EXECUTE`); `read_only = true` strips `MODIFY|EXTEND|DELETE`.
+16. Default `MemFs::access` returns `want ∩ from_mode`, never bits outside `want`, and `Stale` for a removed id.
+
+**Errors**
+17. `Display`: `Error::new(Stale, "")` prints the kind text; with a message prints `"<kind>: <msg>"`; `source()` returns the attached source.
+18. `vfs → io` kind for every `ErrorKind` matches the table (exhaustive list in the test; a new kind fails the test until added).
+19. `vfs → io → vfs` preserves kind and message for every kind (including `InvalidName`, `BadCookie`, `NotPermitted`, which share `io` kinds).
+20. `io → vfs` for plain `io::Error`s: `TimedOut`, `ResourceBusy`, `WouldBlock`, `Interrupted` → `TryAgain`; `StaleNetworkFileHandle` → `Stale`; `InvalidData`, `Other`, `BrokenPipe` → `Io`; the `io::Error` is the source.
+
+**getattr / lookup / parent**
+21. `getattr(root)`: `Dir`, `id == root`, `nlink == 3` in `fixture()` (2 + `/dir`), `size` = entry count.
+22. `lookup` returns attributes equal to `getattr` of the child; `lookup` of a missing name → `NotFound`; `lookup` on a file and on a symlink as `dir` → `NotADirectory`; `lookup(root, "link")` returns the symlink itself (`kind == Symlink`, `size == 5`).
+23. `parent(root) == root`; `parent(/dir) == root`; `parent(/dir/sub) == /dir`; `parent(file)` and `parent(symlink)` → `NotADirectory`.
+
+**read**
+24. Exact content and `eof`: `read(a.txt, 0, [0; 5]) == (5, true)`; `[0; 4] → (4, false)`; `[0; 64] → (5, true)` and `buf[5..]` untouched is **not** asserted (unspecified).
+25. `offset == size` → `(0, true)`; `offset = 1 << 40` → `(0, true)`; `offset = u64::MAX` → `(0, true)`; `offset = u64::MAX − 3` with a 16-byte buffer → `(0, true)` (no overflow panic in debug).
+26. Empty buffer: `(0, false)` at offset 0 of a non-empty file, `(0, true)` at `size`.
+27. Clamp: `MemFs::with_limits(Limits::new().with_max_read_len(4), ..)` on a 10-byte file reads `4/false`, `4/false`, `2/true`; `with_max_read_len(0)` behaves as 1 and still makes progress.
+28. `read` on a dir → `IsADirectory`; on a symlink → `InvalidInput`.
+29. Large file: a 3 MiB file read with a 3 MiB buffer returns 1 MiB (default clamp), and a loop of reads reassembles the exact pattern.
+
+**read_dir and cookies**
+30. Empty dir: `START` → no entries, `eof == true`, verifier 0.
+31. Insertion order and cookies: entries created as `c`, `a`, `b` list as `c, a, b` with strictly increasing cookies ≥ 3.
+32. `max_entries = 1` over 5 entries gives 5 pages of one entry; only the 5th has `eof == true`; resuming from the last cookie gives an empty `eof` page.
+33. `max_entries = 0` behaves as 1; `max_entries = usize::MAX` is clamped to `limits.max_dir_entries`.
+34. 10 000 entries with the default limit: pages of 4096, 4096, 1808; the union is every entry exactly once; with `with_max_dir_entries(7)` the pages are ≤ 7.
+35. `START` with verifier `0xdead_beef`, `Cookie::DOT`, and `Cookie::DOT_DOT` all list from the first entry.
+36. Arbitrary cookies: a never-emitted cookie between two emitted ones resumes after it; `Cookie::new(u64::MAX)` → empty, `eof == true`; never `BadCookie` on `MemFs`.
+37. **Cookie stability under insert/delete** (single-threaded interleaving): page with `max_entries = 1`; between pages remove the next unlisted entry, remove an already-listed entry, remove the entry whose cookie is the cursor, and insert a new entry. Every entry present for the whole listing appears exactly once, no entry appears twice, the removed-before-listed entry never appears, and the inserted entry appears exactly once at the end.
+38. `with_attrs = false` → all `attr == None`; `true` → all `Some` and equal to `getattr` of the entry id.
+39. `read_dir` on a file and on a symlink → `NotADirectory`.
+
+**Stale ids and identity**
+40. On a fresh `MemFs`, `NodeId::new(u64::MAX)` and `NodeId::new(2)` give `Stale` from all 8 id-taking operations (never `NotFound`).
+41. Remove a file, then all 8 operations with its id → `Stale`; remove an empty dir, then `lookup` / `read_dir` / `parent` with it as dir → `Stale`.
+42. Ids are never reused: create `x`, remove it, create `x` again → a different, larger id; the old id stays `Stale`; also after the node budget is restored.
+43. Two `MemFs` instances have different `id_epoch`s; one instance reports the same `info()` on every call.
+44. Attribute bookkeeping: creating an entry increments the dir's `change` by exactly 1 and updates `nlink` for `mkdir`; `write_all` increments the file's `change` by 1 and `mtime` does not go backwards; `read` / `read_dir` / `lookup` never change any `Attr`.
+
+**MemFs build API and limits**
+45. `create_file` / `mkdir` / `symlink` name errors: invalid name → `InvalidName`, 256 bytes → `NameTooLong`, duplicate → `AlreadyExists`, non-dir parent → `NotADirectory`, removed parent → `Stale`.
+46. Symlink targets: exactly `max_symlink_len` (4096) accepted and returned byte-exact by `read_link`; 4097 → `NameTooLong`; empty and NUL-containing → `InvalidInput`; with `with_max_symlink_len(8)`, 8 OK and 9 → `NameTooLong`.
+47. `max_nodes`: `with_limits(.., max_nodes = 3, ..)`: two creates succeed (root counts), the third → `NoSpace`, and `node_count()` stays 3; after a `remove`, a create succeeds again.
+48. `max_bytes` exact boundary: with `max_bytes = 10`, `create_file(root, b"a", 9 bytes)` succeeds (`bytes_used == 10`); `create_file(root, b"b", b"")` → `NoSpace`; `write_all(a, 9, b"x")` → `NoSpace` and the file is unchanged (all-or-nothing).
+49. Sparse writes: `write_all(f, 1 << 40, b"x")` on a default `MemFs` → `NoSpace` quickly with `bytes_used` unchanged; `write_all(f, u64::MAX − 1, b"xyz")` → `FileTooLarge`; `set_len(f, u64::MAX)` → `FileTooLarge`; `write_all` past the end zero-fills (bytes read back as `0`).
+50. `write_all` / `set_len` on a dir → `IsADirectory`, on a symlink → `InvalidInput`; `set_perm(f, 0o10000)` → `InvalidInput`, `0o7777` OK.
+51. `remove`: non-empty dir → `DirectoryNotEmpty`; missing name → `NotFound`; budgets return (`bytes_used` and `node_count` drop by the removed amounts).
+52. `statfs` on `MemFs` reports `max_bytes` / `max_nodes` and the free counters from the accounting formula.
+
+**resolve**
+53. `b""`, `b"/"`, `b"//"` → root; `b"/dir/b.bin"`, `b"dir//b.bin/"` → `b.bin`; missing component → `NotFound`.
+54. `b"dir/./b.bin"`, `b"dir/../a.txt"`, `b".."` → `InvalidName`, with **zero** backend calls (`CountingFs`).
+55. Path length: exactly 4096 bytes passes validation (then `NotFound`); 4097 → `NameTooLong` with zero backend calls.
+56. Depth: a 256-deep `MemFs` chain resolves; 257 components → `InvalidInput` with zero backend calls.
+57. Symlinks: `b"link"` returns the symlink; `b"link/x"` → `NotADirectory`; `b"a.txt/x"` → `NotADirectory`.
+
+**Cancellation**
+58. For each of the 8 async operations on `MemFs`: drop unpolled; poll once with `Waker::noop()` and drop; then the completed operation equals the baseline and `node_count` / `bytes_used` are unchanged.
+59. Same as 58 on `PendingOnce<MemFs>` (the first poll is `Pending`, so the drop happens at a real await point).
+60. `testing::check_cancellation` reports OK on `fixture()` and on `PendingOnce<fixture()>`.
+
+**Dyn vs static parity**
+61. The same scripted operation sequence (including error cases) gives equal results through `MemFs`, `&MemFs`, `Arc<MemFs>`, `Box<MemFs>`, `&dyn DynFilesystem`, `Arc<dyn DynFilesystem>`, `Box<dyn DynFilesystem>`, and the `*_dyn` methods called directly.
+62. Overrides are forwarded: `Overriding`'s `access` and `statfs` results are seen through all 7 wrappers (not the defaults).
+
+**Testing kit**
+63. `testing::check` reports OK on `MemFs::new()`, `fixture()`, a 10 000-entry directory, and a 256-deep chain; `Report::nodes()` counts visited nodes; `max_nodes = 2` stops early (K22) without violations.
+64. Each `Broken*` backend triggers its rule id and only stops the run where unsafe to continue: `len > buf.len()` → K17 (and the kit does not panic); empty non-eof page → K06 (and terminates); duplicate names → K07; emitted cookie 1 → K08; resume returns a wrong suffix → K09; `with_attrs = false` returns `Some` → K11; `getattr` returns a different id → K04; `parent(root) != root` → K03; `NotFound` instead of `Stale` → K21; `read_link` longer than `max_symlink_len` → K18.
+65. `Report::assert_ok` panics with a message starting `vfs::testing:` on a broken backend (`#[should_panic(expected = "vfs::testing:")]`) and does not panic on `MemFs`.
+
+**Concurrency**
+66. `Arc<MemFs>` shared by 4 `std::thread`s, each running `block_on` loops of `getattr` / `read` / `read_dir` / `resolve`, while the main thread creates and removes 1000 files: no panic, no deadlock; every observed `ReadResult` honours `len ≤ buf.len()`; every completed listing has unique names and cookies.
+67. Concurrent `create_file` of the same name from 4 threads: exactly one succeeds, the others get `AlreadyExists`; `node_count` grows by exactly 1.
+
+### Notes for consumers
+
+**`nfs::server`:**
+- Handle layout `[version u8 | fsid u64 | id_epoch u64 | NodeId u64 | generation u64 | optional MAC 16]` = 49 ≤ 64 bytes (`NFS3_FHSIZE`). Epoch or generation mismatch → `NFS3ERR_STALE` without a backend call when possible.
+- Effective `rtmax` = `min(info().max_read, limits.max_read_len)`; clamp client `count` to it before calling `read`.
+- Clamp READDIR `count` / `maxcount` byte budgets itself (it owns the XDR sizes); pass `max_entries ≤ limits.max_dir_entries`. Synthesize `.` (cookie 1) and `..` (cookie 2, via `parent`) and pass `Cookie::START` to the backend for cookies 0–2.
+- Validate backend output defensively (`len ≤ count`, entry names re-checked, `read_link` length) and answer `NFS3ERR_SERVERFAULT` on violations.
+- Map unknown future `ErrorKind`s to `NFS3ERR_IO`, and answer `NFS3ERR_IO` for a future `NodeKind` the server does not map yet; clamp `SystemTime` into `nfstime3`; mask `perm` to `0o7777`.
+
+**megaghost (MEGA backend):**
+- `NodeId` from the MEGA node handle (48 significant bits, non-zero); `generation` 0 (handles are never reused); `id_epoch` constant per account + root handle, so macOS keeps working handles across restarts.
+- Cookie suggestion: order a directory by child handle and use `handle + 3` as the cookie (no overflow under 2^48); resuming with `range(cookie + 1..)` then survives inserts and deletes with verifier 0.
+- MEGA allows duplicate names in one folder: mangle deterministically and stably (e.g. append a handle suffix) so names are unique.
+- macOS probes `._*` (AppleDouble) and `.DS_Store` constantly: answer those `lookup`s with a fast `NotFound` from the cached tree, never a network round trip.
+- Return `TryAgain` (→ `NFS3ERR_JUKEBOX`) while a chunk is being fetched rather than blocking the request or failing with `Io`; never block the thread (contract 2).
+- Removed remote nodes → `Stale` (contract 4); quota → `statfs`; remote changes bump `change` / `mtime` / `size` (contract 9).
+- Run `vfs::testing::check` and `check_cancellation` against a recorded fixture tree in megaghost's CI.
