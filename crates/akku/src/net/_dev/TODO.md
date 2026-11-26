@@ -23,3 +23,26 @@
 - Fill the empty G3 `Drop` stubs for `AsyncTcpListener` / `AsyncTcpStream` (deregister before close) and `AsyncTcpOwnedWriteHalf` (`shutdown(Shutdown::Write)`, errors ignored); `into_std` / `into_split` must then move fields out of a `Drop` type (e.g. `Option` fields). (origin: G3 stub scaffold)
 - Add the non-Tier-1 `sys` fallback (safe, no allowlist entry) returning `io::ErrorKind::Unsupported`; G3 compiles the three backends only behind their DESIGN.md target gates. (origin: DESIGN.md §Non-goals / G3 scaffold)
 - Android (`aarch64-linux-android`, `armv7-linux-androideabi`, `x86_64-linux-android`) and iOS (`aarch64-apple-ios`, `aarch64-apple-ios-sim`, `x86_64-apple-ios`) are not cross-checked yet; the `epoll.rs` / `kqueue.rs` layout asserts are verified only on Linux aarch64 (smd on an Apple-silicon host; CI `ubuntu-latest` adds x86_64), macOS aarch64, and Windows x86_64 (`cargo check`) so far. (origin: DESIGN.md §Tier-1 CI & mobile cross-check strategy)
+
+## Phase 2 (G2 designed: `DESIGN.md` §Phase 2 G2: API)
+
+The Phase 2 items above are designed in `DESIGN.md` §Phase 2 G2 and decided in §Phase 2 Decisions (G2) (Orcha + independent Opus review, 2026-11-26). They are `AsyncUdpSocket`, `AsyncUnix*` (streams also on Windows 10 1803+ via `afunix.sys`, decision Q2), `SocketOpts`, and `AsyncTcpStream::peek`. `AsyncTcpBuilder` is replaced by `SocketOpts` + `bind_with`/`connect_with` (Q1). Vectored I/O and `reunite` stay open.
+
+### In-PR gate obligations (not deferred)
+- G3 step 1: `WSAPoll` + AF_UNIX probe on `windows-latest`. On failure, stop and report to Orcha; the human decides an exception. (origin: decision Q2)
+- G4 step 1: consolidate the Phase 1 `connect_nonblocking`/`SockAddrIn{,6}`/`WSASocketW`/`SetHandleInformation` into `sys/sock_{unix,win}.rs`, with Phase 1 green before any Phase 2 code. (origin: decision Q10)
+- Phase 1 follow-up within this PR: `SO_NOSIGPIPE` on accepted and `from_std` TCP streams on Darwin, and the child-process SIGPIPE probe in place of the current "never SIGPIPE" check. (origin: decision Q7)
+
+### Phase 2c (future)
+- `AsyncUnixStream::peer_cred`: Linux `SO_PEERCRED`, Darwin `getpeereid` + `LOCAL_PEERPID`, Windows `SIO_AF_UNIX_GETPEERPID`. This is the first item. (origin: decision Q5)
+- Ancillary data (`SCM_RIGHTS`, `SCM_CREDENTIALS`), Unix only. (origin: decision Q5)
+
+### Deferred from Phase 2
+- `peek` / `peek_from` on `AsyncUnixStream` / `AsyncUnixDatagram` via `recv`/`recvfrom` with `MSG_PEEK` (std `unix_socket_peek` is unstable in 1.85). (origin: open question 6)
+- Truncation reporting for datagrams (`recvmsg` + `MSG_TRUNC`), plus `recvmmsg`/`sendmmsg`, GSO/GRO, `IP_PKTINFO`. (origin: open question 9)
+- `bind_with` for Unix sockets (buffer sizes, backlog) and Linux autobind. (origin: `DESIGN.md` §P2.1)
+- Bind-before-connect (local source address in `SocketOpts` for `connect_with`). (origin: `DESIGN.md` §P2.1)
+- `IP_TOS` / `IPV6_TCLASS`, `SO_BINDTODEVICE`, source-specific multicast (`IP_ADD_SOURCE_MEMBERSHIP`), UDP disconnect (`AF_UNSPEC`), optional Windows `SO_EXCLUSIVEADDRUSE`. (origin: socket2 0.6.5 / tokio 1.54.1 surface)
+- Unix connect retry with a timeout when the listener backlog is full (needs Phase 3 `akku::time`). (origin: decision Q14)
+- Abstract AF_UNIX names on Windows (`afunix.sys` accepts them; kept Linux/Android only by decision). (origin: decision Q2)
+- Rate-limited `akku::log` line when an accepted socket is dropped because re-applying an option failed. (origin: missing item a)
