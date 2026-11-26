@@ -24,6 +24,23 @@
 //! assert!(reader.is_empty());
 //! ```
 //!
+//! # Varints
+//!
+//! [`BytesMut::put_uvarint`] / [`Cursor::get_uvarint`] (and the zigzag
+//! `put_varint` / `get_varint`) read and write LEB128 varints; the
+//! [`varint`] submodule has the slice- and `Vec`-based functions.
+//!
+//! ```
+//! use akku::bytes::{BytesMut, Cursor};
+//!
+//! let mut buf = BytesMut::new();
+//! buf.put_uvarint(300);
+//! buf.put_varint(-1);
+//! let mut reader = Cursor::new(&buf);
+//! assert_eq!(reader.get_uvarint(), Ok(300));
+//! assert_eq!(reader.get_varint(), Ok(-1));
+//! ```
+//!
 //! # Zero-copy slicing
 //!
 //! ```
@@ -33,6 +50,8 @@
 //! let word = base.slice(6..); // O(1): shares storage, no allocation
 //! assert_eq!(word.as_slice(), b"akku");
 //! ```
+
+pub mod varint;
 
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -455,6 +474,16 @@ impl BytesMut {
         self.buf.push(value);
     }
 
+    /// Appends `value` as an LEB128 varint (1 to 10 bytes).
+    pub fn put_uvarint(&mut self, value: u64) {
+        varint::append_u64(&mut self.buf, value);
+    }
+
+    /// Appends `value` as a zigzag varint (1 to 10 bytes).
+    pub fn put_varint(&mut self, value: i64) {
+        varint::append_i64(&mut self.buf, value);
+    }
+
     /// Removes and returns the first `at` bytes; this buffer keeps the rest.
     ///
     /// Panics when `at > self.len()`.
@@ -664,6 +693,23 @@ impl<'a> Cursor<'a> {
         let mut out = [0u8; N];
         out.copy_from_slice(self.get_slice(N)?);
         Ok(out)
+    }
+
+    /// Reads an LEB128 varint.
+    ///
+    /// On error the position is unchanged. Overlong encodings are accepted;
+    /// see [`varint::decode_u64_strict`].
+    pub fn get_uvarint(&mut self) -> Result<u64, varint::VarintError> {
+        let (value, len) = varint::decode_u64(&self.data[self.pos..])?;
+        self.pos += len;
+        Ok(value)
+    }
+
+    /// Reads a zigzag varint; on error the position is unchanged.
+    pub fn get_varint(&mut self) -> Result<i64, varint::VarintError> {
+        let (value, len) = varint::decode_i64(&self.data[self.pos..])?;
+        self.pos += len;
+        Ok(value)
     }
 
     /// Reads an `f32` (bit pattern) in big-endian order.
