@@ -72,15 +72,18 @@ pub mod http;
 
 pub mod id;
 pub mod ini;
+pub mod io;
 pub mod json;
 pub mod kv;
 pub mod log;
 pub mod markdown;
 pub mod math;
 pub mod mime;
+pub mod net;
 pub mod process;
 pub mod regex;
 pub mod sse;
+pub mod task;
 pub mod template;
 pub mod term;
 pub mod test;

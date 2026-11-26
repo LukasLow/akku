@@ -45,14 +45,14 @@ Details: [`PullRequest`](.agents/workflows/PullRequest.md) · [`Release`](.agent
 1. All commands through `smd` (§2).
 2. PR-only; nothing lands on `main` directly (§3).
 3. One folder per module: `crates/akku/src/<module>/` with `mod.rs`, `tests.rs`, `meta.toml`, and `_dev/` maintainer docs ([`akku-module-layout`](.agents/skills/akku-module-layout/SKILL.md)).
-4. No global names: `akku::http::get`, `akku::json::Value`; flat modules first, families only per [`Namespace.md`](Namespace.md). Read Namespace.md before adding any public name and [`CONCEPT.md`](CONCEPT.md) before adding a module or family.
+4. No global names: `akku::http::get`, `akku::json::Value`; flat modules first, families only, and `std`-superset modules keep `std` names exact with `Async`-prefixed async counterparts per [`Namespace.md`](Namespace.md). Read Namespace.md before adding any public name and [`CONCEPT.md`](CONCEPT.md) before adding a module or family.
 5. Keep domains separate: `html` ≠ `http`; `audio`, `vid`, `pic` stay separate.
 6. Module names are never Rust keywords (`task`, not `async`) and never shadow `::core`.
 7. Macros are sugar over a pleasant manual API.
 8. Zero dependencies by default. External code is a temporary `adapter` (pinned, reviewed, optional feature, hidden behind akku's API) or an MPL-2.0-compatible `fork` (no GPL).
 9. `unsafe` only where no safe way exists (FFI, OS syscalls, sockets, platform APIs), never for convenience or speed; only in `sys` submodules, each block with `// SAFETY:` ([`akku-unsafe`](.agents/skills/akku-unsafe/SKILL.md)). The crate is `#![deny(unsafe_code)]`; only files in `.github/unsafe-allowlist.txt` may opt in, enforced by `.github/scripts/check-unsafe.sh`.
 10. Crypto and TLS come from audited forks or pinned adapters, never from scratch. The module is `akku::tls` (`#[doc(alias = "ssl")]`); there is no `akku::ssl`.
-11. Native first: optimize for macOS, Windows, Linux, and mobile (iOS/Android) — fast and safe. `wasm32` is best-effort where it costs nothing on native (never slower or less safe); wasm special cases live in `#[cfg(target_arch = "wasm32")]` inside the module, and `akku::wasm` is the host/guest runtime only.
+11. Platform tiers. **Tier 1 (first-class):** macOS, Windows, Linux, iOS, Android. Every module with OS-dependent behavior ships a native, fast, safe backend for all five in the same PR — no `Unsupported` stubs or Linux-only slices for Tier 1. **Tier 2 (best-effort):** `wasm32` and other special cases, supported only where it costs nothing on Tier 1 (never slower or less safe); wasm special cases live in `#[cfg(target_arch = "wasm32")]` inside the module, and `akku::wasm` is the host/guest runtime only.
 12. Every public item has rustdoc (`#![deny(missing_docs)]`); all code, comments, and docs are English.
 13. Every module has adversarial tests at its public API in its `tests.rs` ([`akku-tdd`](.agents/skills/akku-tdd/SKILL.md)).
 

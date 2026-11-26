@@ -1,0 +1,3 @@
+kind: Added
+body: Add `akku::task` (zero-dependency single-thread async runtime with `spawn`/`JoinHandle`, limits and a cooperative budget), `akku::io` (`std::io` superset with `AsyncRead`/`AsyncWrite`/`AsyncBufRead` and `copy_to`), and `akku::net` (`std::net` superset with `AsyncTcpListener`/`AsyncTcpStream` on native epoll, kqueue and WSAPoll backends).
+time: 2026-11-26T00:00:00Z

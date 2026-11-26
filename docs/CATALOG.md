@@ -39,10 +39,13 @@
 | `akku::algo` | `native` | yes | - | `@LukasLow` | Zero-dependency graph, shortest-path, union-find, range-query, and string-search algorithms. |
 | `akku::archive` | `native` | yes | - | `@LukasLow` | Zero-dependency DEFLATE, Gzip, Tar, and Zip compression and archive family. |
 | `akku::cache` | `native` | yes | - | `@LukasLow` | Zero-dependency O(1) LRU and TTL in-memory cache with eviction and stats. |
+| `akku::io` | `native` | yes | - | `@LukasLow` | std::io superset with safe async AsyncRead, AsyncWrite, and AsyncBufRead traits. |
 | `akku::kv` | `native` | no | - | `@LukasLow` | Zero-dependency key-value store with durable WAL, snapshots, and prefix scans. |
 | `akku::markdown` | `native` | yes | - | `@LukasLow` | Zero-dependency CommonMark/GFM parser, AST, and XSS-safe HTML renderer. |
+| `akku::net` | `native` | no | - | `@LukasLow` | std::net superset with native async TCP listeners and streams across all Tier-1 platforms. |
 | `akku::regex` | `native` | yes | - | `@LukasLow` | Zero-dependency linear-time ReDoS-safe PikeVM/NFA regular expression engine. |
 | `akku::sse` | `native` | yes | - | `@LukasLow` | Zero-dependency WHATWG Server-Sent Events parser, encoder, and stream helpers. |
+| `akku::task` | `native` | yes | - | `@LukasLow` | Zero-dependency async task executor, runtime, and cooperative cancellation. |
 | `akku::template` | `native` | yes | - | `@LukasLow` | Zero-dependency auto-escaping template engine with AST compiler, blocks, and filters. |
 | `akku::text` | `native` | yes | - | `@LukasLow` | Zero-dependency Unicode UAX #29 graphemes, text helpers, and Myers diff engine. |
 | `akku::ws` | `native` | yes | - | `@LukasLow` | Zero-dependency RFC 6455 WebSocket framing, handshake, masking, and UTF-8 state machine. |

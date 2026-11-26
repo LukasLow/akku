@@ -223,6 +223,19 @@ Modules named like a `std` module (`io`, `fs`, `net`, `sync`, `time`, `env`,
 `process`, `os`) are **supersets**, so `use akku::fs` works ergonomically next
 to or instead of `std::fs`.
 
+In a `std`-superset module (`io`, `fs`, `net`, `sync`, `process`, …), every name
+`std` defines in the matching module keeps `std`'s exact item and meaning. It is
+re-exported by explicit list, never by glob, and never redefined or shadowed. An
+async counterpart never takes that name:
+
+- **(a)** async traits and types get an `Async` prefix (`AsyncRead`,
+  `AsyncTcpStream`, `AsyncFile`, `AsyncMutex`);
+- **(b)** async operations on a reader or writer become methods on the matching
+  `Async*Ext` trait (`copy_to`, `read_to_end`);
+- **(c)** other async free functions may only use names `std` lacks in that
+  module (`time::sleep`, `time::timeout`). Otherwise the operation goes on an
+  `Ext` trait. Never use an `_async` or `async_` suffix or prefix.
+
 ### 4. No product names at level 1
 
 Vendor and product names live under their domain:

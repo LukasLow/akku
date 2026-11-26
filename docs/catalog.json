@@ -394,6 +394,20 @@
       "path": "crates/akku/src/cache"
     },
     {
+      "name": "io",
+      "family": null,
+      "status": "native",
+      "wasm32": true,
+      "feature": null,
+      "wave": 2,
+      "summary": "std::io superset with safe async AsyncRead, AsyncWrite, and AsyncBufRead traits.",
+      "owners": ["LukasLow"],
+      "tags": ["io", "async", "streams", "std-superset"],
+      "derived_tags": ["native-0dep", "wasm32"],
+      "source": null,
+      "path": "crates/akku/src/io"
+    },
+    {
       "name": "kv",
       "family": null,
       "status": "native",
@@ -422,6 +436,20 @@
       "path": "crates/akku/src/markdown"
     },
     {
+      "name": "net",
+      "family": null,
+      "status": "native",
+      "wasm32": false,
+      "feature": null,
+      "wave": 2,
+      "summary": "std::net superset with native async TCP listeners and streams across all Tier-1 platforms.",
+      "owners": ["LukasLow"],
+      "tags": ["net", "tcp", "async", "sockets", "std-superset"],
+      "derived_tags": ["native-0dep"],
+      "source": null,
+      "path": "crates/akku/src/net"
+    },
+    {
       "name": "regex",
       "family": null,
       "status": "native",
@@ -448,6 +476,20 @@
       "derived_tags": ["native-0dep", "wasm32"],
       "source": null,
       "path": "crates/akku/src/sse"
+    },
+    {
+      "name": "task",
+      "family": null,
+      "status": "native",
+      "wasm32": true,
+      "feature": null,
+      "wave": 2,
+      "summary": "Zero-dependency async task executor, runtime, and cooperative cancellation.",
+      "owners": ["LukasLow"],
+      "tags": ["task", "async", "runtime", "executor"],
+      "derived_tags": ["native-0dep", "wasm32"],
+      "source": null,
+      "path": "crates/akku/src/task"
     },
     {
       "name": "template",
