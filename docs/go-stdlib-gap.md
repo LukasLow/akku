@@ -45,8 +45,6 @@ Rows marked `akku` or `planned` that are only partly covered today:
 3. `akku::html` has no public `unescape` (`html`).
 4. `akku::archive::checksum` has CRC-32 (IEEE) only, no CRC-32C (`hash/crc32`).
 5. `akku::time` has fixed UTC offsets only, no IANA zones (`time`, `time/tzdata`).
-6. `akku::bytes` has no LEB128/zigzag varints, although its `meta.toml` summary
-   and the catalog claim them (`encoding/binary`).
 
 ---
 
@@ -170,7 +168,7 @@ never from scratch).
 | `encoding/asn1` | `missing → proposal` | `akku::asn1` | DER/BER; prerequisite for `tls` certificates and `crypto::sign` keys. |
 | `encoding/base32` | `missing → proposal` | `akku::base32` | RFC 4648 Base32/Base32hex; `auth::totp` secrets need it. |
 | `encoding/base64` | `akku` | `akku::base64` | |
-| `encoding/binary` | `akku` | `akku::bytes` | Endian `put_*`/`Cursor` reads; varints not yet. Plus `to_be_bytes` in Rust std. |
+| `encoding/binary` | `akku` | `akku::bytes` | Endian `put_*`/`Cursor` reads; LEB128/zigzag varints in `akku::bytes::varint`. Plus `to_be_bytes` in Rust std. |
 | `encoding/csv` | `akku` | `akku::csv` | |
 | `encoding/gob` | `n/a` | - | Go-specific wire format; akku uses `msgpack`/`cbor`/`protobuf` (W3). |
 | `encoding/hex` | `akku` | `akku::hex` | |
