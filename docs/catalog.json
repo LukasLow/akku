@@ -148,7 +148,7 @@
       "wasm32": true,
       "feature": null,
       "wave": 1,
-      "summary": "Lightweight HTML response wrapper and text escaping helpers.",
+      "summary": "Lightweight HTML response wrapper and text escaping and unescaping helpers.",
       "owners": ["LukasLow"],
       "tags": ["html", "web", "markup"],
       "derived_tags": ["native-0dep", "wasm32"],
