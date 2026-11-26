@@ -1,13 +1,15 @@
-//! `std::net` superset with native asynchronous TCP sockets on `akku::task`.
+//! `std::net` superset with native asynchronous TCP, UDP, and Unix sockets on `akku::task`.
 //!
 //! Every blocking type and address primitive from `std::net` is re-exported
 //! under its original name (`TcpListener`, `TcpStream`, `UdpSocket`,
 //! `SocketAddr`, `IpAddr`, `Shutdown`, and friends) on all targets, including
 //! `wasm32`.
 //!
-//! On native (non-`wasm32`) targets, asynchronous TCP networking is provided by
-//! [`AsyncTcpListener`], [`AsyncTcpStream`], and its borrowed and owned split
-//! halves, integrated directly with [`crate::io::AsyncRead`] and
+//! On native (non-`wasm32`) targets, asynchronous networking is provided by
+//! [`AsyncTcpListener`], [`AsyncTcpStream`] (and its split halves),
+//! [`AsyncUdpSocket`], `AsyncUnixListener`, `AsyncUnixStream` (Unix and
+//! Windows 10 1803+), `AsyncUnixDatagram` (Unix), and [`SocketOpts`],
+//! integrated directly with [`crate::io::AsyncRead`] and
 //! [`crate::io::AsyncWrite`].
 //!
 //! # Overview
@@ -19,6 +21,10 @@
 //! | Async TCP connection (native) | [`AsyncTcpStream`] |
 //! | Borrowed full-duplex split (native) | [`AsyncTcpReadHalf`], [`AsyncTcpWriteHalf`] |
 //! | Owned full-duplex split (native) | [`AsyncTcpOwnedReadHalf`], [`AsyncTcpOwnedWriteHalf`] |
+//! | Async UDP | [`AsyncUdpSocket`] |
+//! | Async Unix stream server/connection (Unix, Windows 10 1803+) | `AsyncUnixListener`, `AsyncUnixStream`, `UnixSocketAddr` |
+//! | Async Unix datagram (Unix) | `AsyncUnixDatagram` |
+//! | Socket options | [`SocketOpts`], [`TcpKeepalive`] |
 //!
 //! # Platform support
 //!
@@ -33,8 +39,9 @@
 //!   Android, `FD_CLOEXEC` on Darwin, `WSA_FLAG_NO_HANDLE_INHERIT` on
 //!   Windows).
 //! - **`wasm32`:** `std::net` address and blocking re-exports compile cleanly;
-//!   native async socket types (`AsyncTcp*`) are `#[cfg(not(target_arch = "wasm32"))]`
-//!   because raw OS TCP sockets are unavailable in `wasm32`.
+//!   native async socket types (`AsyncTcp*`, `AsyncUdpSocket`, `AsyncUnix*`,
+//!   `SocketOpts`) are `#[cfg(not(target_arch = "wasm32"))]`
+//!   because raw OS sockets are unavailable in `wasm32`.
 //!
 //! # Errors and runtime requirement
 //!
@@ -94,9 +101,27 @@ pub use std::net::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
+mod opts;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod reactor;
 #[cfg(not(target_arch = "wasm32"))]
 mod sys;
+#[cfg(not(target_arch = "wasm32"))]
+mod udp;
+#[cfg(all(any(unix, windows), not(target_arch = "wasm32")))]
+mod unix;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use opts::{SocketOpts, TcpKeepalive};
+#[cfg(not(target_arch = "wasm32"))]
+pub use udp::AsyncUdpSocket;
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+pub use unix::AsyncUnixDatagram;
+#[cfg(all(any(unix, windows), not(target_arch = "wasm32")))]
+pub use unix::{
+    AsyncUnixListener, AsyncUnixOwnedReadHalf, AsyncUnixOwnedWriteHalf, AsyncUnixReadHalf,
+    AsyncUnixStream, AsyncUnixWriteHalf, UnixSocketAddr,
+};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::fmt;
@@ -114,6 +139,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
 use std::task::{ready, Context, Poll};
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Duration;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::io::{AsyncRead, AsyncWrite};
@@ -184,6 +211,24 @@ impl AsyncTcpListener {
         let reactor = crate::task::current_reactor()?;
         let listener = std::net::TcpListener::bind(addr)?;
         Self::register(listener, reactor)
+    }
+
+    /// Creates a new `AsyncTcpListener` bound to `addr`, applying `opts`
+    /// before `bind` and `listen`.
+    ///
+    /// Tries each resolved address in order until one succeeds, returning the
+    /// last error if all fail. `nodelay`, `keepalive`, and `zero_linger` from
+    /// `opts` are also applied to every accepted [`AsyncTcpStream`]. Calling
+    /// `bind_with(addr, &SocketOpts::new())` behaves identically to
+    /// [`bind`](Self::bind).
+    ///
+    /// # Blocking
+    ///
+    /// A host name in `addr` is resolved with the blocking system resolver
+    /// (`getaddrinfo`) on the runtime thread.
+    #[allow(unused_variables)]
+    pub async fn bind_with<A: ToSocketAddrs>(addr: A, opts: &SocketOpts) -> io::Result<Self> {
+        todo!()
     }
 
     fn register(listener: std::net::TcpListener, reactor: Arc<Reactor>) -> io::Result<Self> {
@@ -375,6 +420,23 @@ impl AsyncTcpStream {
                 "could not resolve to any addresses",
             )
         }))
+    }
+
+    /// Opens a non-blocking async TCP connection to `addr`, applying `opts`
+    /// before `connect`.
+    ///
+    /// Tries each resolved address in order until one succeeds, returning the
+    /// last error if all fail. Validates `opts` before creating any socket and
+    /// returns `ErrorKind::InvalidInput` for out-of-range values or
+    /// inapplicable options (`broadcast`, `backlog`).
+    ///
+    /// # Blocking
+    ///
+    /// A host name in `addr` is resolved with the blocking system resolver
+    /// (`getaddrinfo`) on the runtime thread.
+    #[allow(unused_variables)]
+    pub async fn connect_with<A: ToSocketAddrs>(addr: A, opts: &SocketOpts) -> io::Result<Self> {
+        todo!()
     }
 
     async fn connect_one(addr: SocketAddr, reactor: &Arc<Reactor>) -> io::Result<Self> {
@@ -586,6 +648,75 @@ impl AsyncTcpStream {
     pub fn take_error(&self) -> io::Result<Option<io::Error>> {
         self.io().take_error()
     }
+
+    /// Receives data from the stream without removing it from the receive
+    /// queue.
+    ///
+    /// Takes `&mut self` to uphold the single-reader waker invariant.
+    /// Cancel-safe.
+    #[allow(unused_variables)]
+    pub async fn peek(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        todo!()
+    }
+
+    /// Polls for peeking bytes into `buf` without consuming them.
+    #[allow(unused_variables)]
+    pub fn poll_peek(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+        todo!()
+    }
+
+    /// Attempts a non-blocking peek without awaiting readiness.
+    #[allow(unused_variables)]
+    pub fn try_peek(&self, buf: &mut [u8]) -> io::Result<usize> {
+        todo!()
+    }
+
+    /// Gets whether `SO_KEEPALIVE` is enabled on this socket.
+    pub fn keepalive(&self) -> io::Result<bool> {
+        todo!()
+    }
+
+    /// Enables or disables `SO_KEEPALIVE` and optional probe timers on this
+    /// socket.
+    #[allow(unused_variables)]
+    pub fn set_keepalive(&self, keepalive: Option<TcpKeepalive>) -> io::Result<()> {
+        todo!()
+    }
+
+    /// Gets the `SO_LINGER` state of this socket: `Some(Duration::ZERO)` after
+    /// [`set_zero_linger(true)`](Self::set_zero_linger), or `None` when off.
+    pub fn linger(&self) -> io::Result<Option<Duration>> {
+        todo!()
+    }
+
+    /// Enables or disables `SO_LINGER` with a zero timeout (abortive `RST` on
+    /// close).
+    #[allow(unused_variables)]
+    pub fn set_zero_linger(&self, on: bool) -> io::Result<()> {
+        todo!()
+    }
+
+    /// Gets the value of the `SO_RCVBUF` option in bytes.
+    pub fn recv_buffer_size(&self) -> io::Result<usize> {
+        todo!()
+    }
+
+    /// Sets the value of the `SO_RCVBUF` option in bytes (`1..=i32::MAX`).
+    #[allow(unused_variables)]
+    pub fn set_recv_buffer_size(&self, bytes: usize) -> io::Result<()> {
+        todo!()
+    }
+
+    /// Gets the value of the `SO_SNDBUF` option in bytes.
+    pub fn send_buffer_size(&self) -> io::Result<usize> {
+        todo!()
+    }
+
+    /// Sets the value of the `SO_SNDBUF` option in bytes (`1..=i32::MAX`).
+    #[allow(unused_variables)]
+    pub fn set_send_buffer_size(&self, bytes: usize) -> io::Result<()> {
+        todo!()
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -686,6 +817,25 @@ impl AsyncTcpReadHalf<'_> {
     /// Attempts a non-blocking read without awaiting readiness.
     pub fn try_read(&self, buf: &mut [u8]) -> io::Result<usize> {
         self.stream.try_read_ref(buf)
+    }
+
+    /// Receives data from the stream without removing it from the receive
+    /// queue. Cancel-safe.
+    #[allow(unused_variables)]
+    pub async fn peek(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        todo!()
+    }
+
+    /// Polls for peeking bytes into `buf` without consuming them.
+    #[allow(unused_variables)]
+    pub fn poll_peek(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+        todo!()
+    }
+
+    /// Attempts a non-blocking peek without awaiting readiness.
+    #[allow(unused_variables)]
+    pub fn try_peek(&self, buf: &mut [u8]) -> io::Result<usize> {
+        todo!()
     }
 
     /// Returns the local socket address of the underlying stream.
@@ -799,6 +949,25 @@ impl AsyncTcpOwnedReadHalf {
         self.stream.try_read_ref(buf)
     }
 
+    /// Receives data from the stream without removing it from the receive
+    /// queue. Cancel-safe.
+    #[allow(unused_variables)]
+    pub async fn peek(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        todo!()
+    }
+
+    /// Polls for peeking bytes into `buf` without consuming them.
+    #[allow(unused_variables)]
+    pub fn poll_peek(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+        todo!()
+    }
+
+    /// Attempts a non-blocking peek without awaiting readiness.
+    #[allow(unused_variables)]
+    pub fn try_peek(&self, buf: &mut [u8]) -> io::Result<usize> {
+        todo!()
+    }
+
     /// Returns the local socket address of the underlying stream.
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.stream.local_addr()
@@ -899,5 +1068,263 @@ impl fmt::Debug for AsyncTcpOwnedWriteHalf {
 impl Drop for AsyncTcpOwnedWriteHalf {
     fn drop(&mut self) {
         let _ = self.stream.shutdown_how(Shutdown::Write);
+    }
+}
+
+#[cfg(all(test, unix, not(target_arch = "wasm32")))]
+mod tests_sigpipe {
+    //! Child-process `SIGPIPE` probes for tests 20 and 27 (DESIGN.md §P2.8,
+    //! decision Q7). Lives in `--lib` tests because test-only `signal()` FFI
+    //! must stay inside allowlisted `sys/*.rs` files (`check-unsafe.sh`).
+
+    use std::io::ErrorKind;
+    use std::os::unix::process::ExitStatusExt;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+    use crate::io::AsyncWriteExt;
+    use crate::task::{self, Runtime};
+
+    const ENV_CASE: &str = "AKKU_SIGPIPE_PROBE_CASE";
+
+    struct RemoveOnDrop(PathBuf);
+    impl Drop for RemoveOnDrop {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    fn temp_path(tag: &str) -> RemoveOnDrop {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "akku-sigpipe-{tag}-{}-{}.sock",
+            std::process::id(),
+            nanos
+        ));
+        let _ = std::fs::remove_file(&path);
+        RemoveOnDrop(path)
+    }
+
+    fn run_child(test_name: &str, case: &str) -> std::process::Output {
+        let exe = std::env::current_exe().expect("current_exe");
+        Command::new(exe)
+            .args(["--exact", test_name, "--nocapture", "--test-threads=1"])
+            .env(ENV_CASE, case)
+            .output()
+            .expect("spawn sigpipe probe child")
+    }
+
+    fn assert_child_ok(case: &str, out: &std::process::Output) {
+        assert_ne!(
+            out.status.signal(),
+            Some(13),
+            "SIGPIPE probe ({case}) child was killed by SIGPIPE (signal 13)\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        );
+        assert!(
+            out.status.success(),
+            "SIGPIPE probe ({case}) child failed ({:?})\nstdout: {}\nstderr: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        );
+    }
+
+    /// Test 20: re-executes this test binary with `SIGPIPE` restored to
+    /// `SIG_DFL` and verifies writes to closed peers return `BrokenPipe`
+    /// (never signal 13) for connected, accepted, and `pair()` Unix streams
+    /// as well as accepted and `from_std` TCP streams.
+    #[test]
+    fn p2_20_sigpipe_child_probe_streams() {
+        if let Ok(case) = std::env::var(ENV_CASE) {
+            sys::reset_sigpipe_to_default();
+            let rt = Runtime::new().expect("runtime");
+            rt.block_on(async move {
+                match case.as_str() {
+                    "unix_connect" => {
+                        let path = temp_path("uconn");
+                        let listener = AsyncUnixListener::bind(&path.0).expect("unix bind");
+                        let p = path.0.clone();
+                        let c = task::spawn(async move { AsyncUnixStream::connect(&p).await });
+                        let (server, _) = listener.accept().await.expect("accept");
+                        let mut client = c.await.unwrap().expect("connect");
+                        drop(server);
+                        let mut saw_err = None;
+                        for _ in 0..64 {
+                            if let Err(e) = client.write_all(&[b'x'; 4096]).await {
+                                saw_err = Some(e.kind());
+                                break;
+                            }
+                            task::yield_now().await;
+                        }
+                        assert!(
+                            matches!(
+                                saw_err,
+                                Some(ErrorKind::BrokenPipe | ErrorKind::ConnectionReset)
+                            ),
+                            "expected BrokenPipe/ConnectionReset, got {saw_err:?}"
+                        );
+                    }
+                    "unix_accept" => {
+                        let path = temp_path("uacc");
+                        let listener = AsyncUnixListener::bind(&path.0).expect("unix bind");
+                        let p = path.0.clone();
+                        let c = task::spawn(async move { AsyncUnixStream::connect(&p).await });
+                        let (mut server, _) = listener.accept().await.expect("accept");
+                        let client = c.await.unwrap().expect("connect");
+                        drop(client);
+                        let mut saw_err = None;
+                        for _ in 0..64 {
+                            if let Err(e) = server.write_all(&[b'x'; 4096]).await {
+                                saw_err = Some(e.kind());
+                                break;
+                            }
+                            task::yield_now().await;
+                        }
+                        assert!(
+                            matches!(
+                                saw_err,
+                                Some(ErrorKind::BrokenPipe | ErrorKind::ConnectionReset)
+                            ),
+                            "expected BrokenPipe/ConnectionReset, got {saw_err:?}"
+                        );
+                    }
+                    "unix_pair" => {
+                        let (mut a, b) = AsyncUnixStream::pair().expect("pair");
+                        drop(b);
+                        let err = a.write_all(b"boom").await.unwrap_err();
+                        assert!(
+                            matches!(
+                                err.kind(),
+                                ErrorKind::BrokenPipe | ErrorKind::ConnectionReset
+                            ),
+                            "expected BrokenPipe/ConnectionReset, got {err:?}"
+                        );
+                    }
+                    "tcp_accept" => {
+                        let listener = AsyncTcpListener::bind("127.0.0.1:0").await.expect("bind");
+                        let addr = listener.local_addr().expect("local_addr");
+                        let c = task::spawn(async move { AsyncTcpStream::connect(addr).await });
+                        let (mut server, _) = listener.accept().await.expect("accept");
+                        let client = c.await.unwrap().expect("connect");
+                        drop(client);
+                        let mut saw_err = None;
+                        for _ in 0..200 {
+                            if let Err(e) = server.write_all(&[b'x'; 4096]).await {
+                                saw_err = Some(e.kind());
+                                break;
+                            }
+                            task::yield_now().await;
+                        }
+                        assert!(
+                            matches!(
+                                saw_err,
+                                Some(ErrorKind::BrokenPipe | ErrorKind::ConnectionReset)
+                            ),
+                            "expected BrokenPipe/ConnectionReset, got {saw_err:?}"
+                        );
+                    }
+                    "tcp_from_std" => {
+                        let std_l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+                        let addr = std_l.local_addr().expect("addr");
+                        let std_c = std::net::TcpStream::connect(addr).expect("connect");
+                        let (std_s, _) = std_l.accept().expect("accept");
+                        let mut server = AsyncTcpStream::from_std(std_s).expect("from_std");
+                        drop(std_c);
+                        let mut saw_err = None;
+                        for _ in 0..200 {
+                            if let Err(e) = server.write_all(&[b'x'; 4096]).await {
+                                saw_err = Some(e.kind());
+                                break;
+                            }
+                            task::yield_now().await;
+                        }
+                        assert!(
+                            matches!(
+                                saw_err,
+                                Some(ErrorKind::BrokenPipe | ErrorKind::ConnectionReset)
+                            ),
+                            "expected BrokenPipe/ConnectionReset, got {saw_err:?}"
+                        );
+                    }
+                    other => panic!("unknown SIGPIPE probe case: {other}"),
+                }
+            });
+            return;
+        }
+
+        let test_name = "net::tests_sigpipe::p2_20_sigpipe_child_probe_streams";
+        for case in [
+            "unix_connect",
+            "unix_accept",
+            "unix_pair",
+            "tcp_accept",
+            "tcp_from_std",
+        ] {
+            let out = run_child(test_name, case);
+            assert_child_ok(case, &out);
+        }
+    }
+
+    /// Test 27 (child probe): connected `AsyncUnixDatagram::send` after the
+    /// peer is dropped returns an error (`ConnectionRefused`, `NotConnected`,
+    /// or `BrokenPipe`) and never raises `SIGPIPE` when `SIGPIPE` is `SIG_DFL`.
+    #[test]
+    fn p2_27_sigpipe_child_probe_unix_datagram() {
+        if let Ok(case) = std::env::var(ENV_CASE) {
+            sys::reset_sigpipe_to_default();
+            match case.as_str() {
+                "akku_dgram" => {
+                    let rt = Runtime::new().expect("runtime");
+                    rt.block_on(async {
+                        let (a, b) = AsyncUnixDatagram::pair().expect("dgram pair");
+                        drop(b);
+                        let err = a.send(b"hello").await.unwrap_err();
+                        assert!(
+                            matches!(
+                                err.kind(),
+                                ErrorKind::ConnectionRefused
+                                    | ErrorKind::NotConnected
+                                    | ErrorKind::BrokenPipe
+                                    | ErrorKind::ConnectionReset
+                            ),
+                            "unexpected error on dropped dgram peer: {err:?}"
+                        );
+                    });
+                }
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                "std_dgram_probe" => {
+                    let (a, b) = std::os::unix::net::UnixDatagram::pair().expect("std pair");
+                    drop(b);
+                    let res = a.send(b"hello");
+                    eprintln!("std UnixDatagram::send without MSG_NOSIGNAL returned: {res:?}");
+                }
+                other => panic!("unknown SIGPIPE dgram case: {other}"),
+            }
+            return;
+        }
+
+        let test_name = "net::tests_sigpipe::p2_27_sigpipe_child_probe_unix_datagram";
+        let out = run_child(test_name, "akku_dgram");
+        assert_child_ok("akku_dgram", &out);
+
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            // Diagnostic probe per decision Q7: record whether Linux
+            // `unix_dgram` raises SIGPIPE without MSG_NOSIGNAL (never fails
+            // the test either way; MSG_NOSIGNAL stays).
+            let probe = run_child(test_name, "std_dgram_probe");
+            eprintln!(
+                "Linux std unix_dgram probe status: {:?} (signal={:?})",
+                probe.status,
+                probe.status.signal()
+            );
+        }
     }
 }
