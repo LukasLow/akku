@@ -55,3 +55,6 @@ impl Poller {
 pub(crate) fn connect_nonblocking(_addr: SocketAddr) -> io::Result<(std::net::TcpStream, bool)> {
     Err(unsupported())
 }
+
+#[cfg(all(test, unix))]
+pub(crate) fn reset_sigpipe_to_default() {}

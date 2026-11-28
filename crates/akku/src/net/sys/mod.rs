@@ -23,6 +23,18 @@
 ))]
 mod epoll;
 #[cfg(all(
+    test,
+    any(target_os = "linux", target_os = "android"),
+    any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "x86",
+        target_arch = "arm",
+        target_arch = "riscv64",
+    )
+))]
+pub(crate) use epoll::reset_sigpipe_to_default;
+#[cfg(all(
     any(target_os = "linux", target_os = "android"),
     any(
         target_arch = "x86_64",
@@ -40,11 +52,22 @@ pub(crate) use epoll::{connect_nonblocking, Poller};
 ))]
 mod kqueue;
 #[cfg(all(
+    test,
+    any(target_os = "macos", target_os = "ios"),
+    any(target_arch = "aarch64", target_arch = "x86_64")
+))]
+pub(crate) use kqueue::reset_sigpipe_to_default;
+#[cfg(all(
     any(target_os = "macos", target_os = "ios"),
     any(target_arch = "aarch64", target_arch = "x86_64")
 ))]
 pub(crate) use kqueue::{connect_nonblocking, Poller};
 
+#[cfg(all(
+    target_os = "windows",
+    any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "x86")
+))]
+mod sock_win;
 #[cfg(all(
     target_os = "windows",
     any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "x86")
@@ -77,6 +100,27 @@ pub(crate) use wsapoll::{connect_nonblocking, Poller};
     ),
 )))]
 mod fallback;
+#[cfg(all(
+    test,
+    unix,
+    not(any(
+        all(
+            any(target_os = "linux", target_os = "android"),
+            any(
+                target_arch = "x86_64",
+                target_arch = "aarch64",
+                target_arch = "x86",
+                target_arch = "arm",
+                target_arch = "riscv64",
+            )
+        ),
+        all(
+            any(target_os = "macos", target_os = "ios"),
+            any(target_arch = "aarch64", target_arch = "x86_64")
+        ),
+    ))
+))]
+pub(crate) use fallback::reset_sigpipe_to_default;
 #[cfg(not(any(
     all(
         any(target_os = "linux", target_os = "android"),

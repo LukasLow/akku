@@ -417,3 +417,22 @@ pub(crate) fn connect_nonblocking(addr: SocketAddr) -> io::Result<(std::net::Tcp
     };
     Ok((stream, connected))
 }
+
+#[cfg(test)]
+pub(crate) fn reset_sigpipe_to_default() {
+    // POSIX `SIGPIPE = 13`, `SIG_DFL = 0` on macOS and iOS.
+    const SIGPIPE: c_int = 13;
+    const SIG_DFL: usize = 0;
+
+    // SAFETY: `signal(int, void (*)(int))` matches the C ABI on Darwin;
+    // passing `SIG_DFL` (0) restores default disposition without any function
+    // pointer callback.
+    unsafe extern "C" {
+        fn signal(sig: c_int, handler: usize) -> usize;
+    }
+
+    // SAFETY: restoring `SIG_DFL` for `SIGPIPE` has no pointer preconditions
+    // and is invoked only inside a dedicated child process spawned by the
+    // SIGPIPE probe tests.
+    let _ = unsafe { signal(SIGPIPE, SIG_DFL) };
+}

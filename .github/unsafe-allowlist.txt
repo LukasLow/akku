@@ -9,4 +9,5 @@
 
 crates/akku/src/net/sys/epoll.rs
 crates/akku/src/net/sys/kqueue.rs
+crates/akku/src/net/sys/sock_win.rs
 crates/akku/src/net/sys/wsapoll.rs
