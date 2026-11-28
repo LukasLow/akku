@@ -1,0 +1,7 @@
+name = "sync"
+status = "native"
+wasm32 = true
+wave = 2
+summary = "std::sync superset with safe async Mutex, RwLock, Semaphore, Notify, OnceCell, and oneshot, MPMC, broadcast, and watch channels."
+owners = ["LukasLow"]
+tags = ["sync", "async", "concurrency", "channels", "std-superset"]

@@ -83,6 +83,7 @@ pub mod net;
 pub mod process;
 pub mod regex;
 pub mod sse;
+pub mod sync;
 pub mod task;
 pub mod template;
 pub mod term;
