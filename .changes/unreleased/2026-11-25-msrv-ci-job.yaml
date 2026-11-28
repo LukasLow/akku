@@ -1,3 +1,0 @@
-kind: Added
-body: Add an optional MSRV 1.85.0 CI job to verify workspace compatibility with the declared minimum supported Rust version while keeping normal builds on stable.
-time: 2026-11-25T00:00:00Z
