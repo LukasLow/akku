@@ -1,3 +1,0 @@
-kind: Added
-body: "`akku::bytes::varint` adds LEB128 and zigzag varints (Go `encoding/binary` `Uvarint`/`Varint` parity, protobuf-compatible) with lenient and strict decoders, plus `BytesMut::put_uvarint`/`put_varint` and `Cursor::get_uvarint`/`get_varint`."
-time: 2026-11-26T00:00:00Z

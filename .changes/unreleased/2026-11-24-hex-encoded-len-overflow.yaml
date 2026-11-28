@@ -1,3 +1,0 @@
-kind: Fixed
-body: "`hex::encoded_len` now panics with a clear message when `input_len * 2` overflows `usize`, instead of silently wrapping to a too-small length in release builds."
-time: 2026-11-24T00:00:00Z

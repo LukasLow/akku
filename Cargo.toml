@@ -8,7 +8,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 rust-version = "1.85"
 license = "MPL-2.0"
@@ -16,8 +16,8 @@ repository = "https://github.com/LukasLow/akku"
 homepage = "https://github.com/LukasLow/akku"
 
 [workspace.dependencies]
-akku = { path = "crates/akku", version = "0.0.1" }
-akku-drive = { path = "crates/akku-drive", version = "0.0.1" }
+akku = { path = "crates/akku", version = "0.0.2" }
+akku-drive = { path = "crates/akku-drive", version = "0.0.2" }
 axum = "=0.8.9"
 tokio = { version = "=1.54.1", features = ["rt-multi-thread", "net"] }
 proc-macro2 = "1"
